@@ -1,21 +1,47 @@
 # Konteks untuk Claude (HP / Cloud session)
 
-File ini dibaca otomatis setiap sesi baru. Owner: **Hermawan** (pemula, Bahasa Indonesia). Jawab singkat. Kerjakan sendiri via SSH, jangan suruh user.
+File ini dibaca otomatis setiap sesi baru. Owner: **Hermawan** (pemula, Bahasa Indonesia). Jawab singkat. Kerjakan sendiri via bridge VPS, jangan suruh user.
 
-## BOOTSTRAP SSH (jalankan paling awal sebelum apapun)
+## BOOTSTRAP — WAJIB JALANKAN PERTAMA KALI
+Sebelum apapun, jalankan ini di bash agar fungsi `vps` aktif:
+
 ```bash
-mkdir -p ~/.ssh && chmod 700 ~/.ssh
-echo "$VPS_SSH_KEY_B64" | base64 -d > ~/.ssh/id_ed25519
-chmod 600 ~/.ssh/id_ed25519
-ssh-keyscan -H 187.127.110.187 >> ~/.ssh/known_hosts 2>/dev/null
-ssh -o BatchMode=yes root@187.127.110.187 "echo SSH_OK"
-```
-Setelah itu semua command VPS dijalankan via: `ssh root@187.127.110.187 "<command>"`
+export VPS_BRIDGE_URL="https://extraordinary-dishes-symptoms-lighter.trycloudflare.com"
+# Token disuplai dari Cloud env var VPS_BRIDGE_TOKEN
 
-## VPS
-- Host: `root@187.127.110.187` (Hostinger KVM 2)
-- Login: **SSH key only**. Cloud session pakai env var `VPS_SSH_KEY_B64` (lihat bootstrap di atas).
-- Sumber-of-truth lengkap: `/root/PROJECT_STATE.md` di VPS — baca via SSH untuk detail terbaru.
+vps() {
+  python3 -c '
+import sys, os, json, urllib.request
+cmd = sys.argv[1]
+req = urllib.request.Request(
+    os.environ["VPS_BRIDGE_URL"] + "/exec",
+    data=json.dumps({"cmd": cmd, "timeout": 180}).encode(),
+    headers={"X-Token": os.environ["VPS_BRIDGE_TOKEN"], "Content-Type": "application/json"},
+    method="POST",
+)
+try:
+    resp = json.load(urllib.request.urlopen(req, timeout=200))
+except Exception as e:
+    print(f"BRIDGE ERROR: {e}", file=sys.stderr); sys.exit(1)
+sys.stdout.write(resp.get("stdout",""))
+if resp.get("stderr"): sys.stderr.write(resp["stderr"])
+sys.exit(resp.get("exit", 0))
+' "$*"
+}
+export -f vps
+
+# verify bridge alive
+vps "echo BRIDGE_OK && hostname"
+```
+
+Setelah bootstrap, **semua command VPS = `vps "<command bash>"`**. Contoh:
+- `vps "systemctl is-active awp-miner zcashd"`
+- `vps "tail -50 /var/log/awp/miner-v4.log"`
+- `vps "zcash-cli -conf=/zcash/zcash.conf -datadir=/zcash/data getblockchaininfo"`
+
+## VPS — INFO
+- Host: `187.127.110.187` (Hostinger KVM 2). SSH port: bukan dari Cloud (firewall). Akses Cloud = via bridge HTTPS di atas.
+- Sumber-of-truth lengkap: `/root/PROJECT_STATE.md` di VPS — `vps "cat /root/PROJECT_STATE.md"` untuk detail terbaru.
 
 ## DUA PROYEK (terisolasi)
 
@@ -39,14 +65,17 @@ Setelah itu semua command VPS dijalankan via: `ssh root@187.127.110.187 "<comman
   3. Register node ke DePINZcash, verifikasi proof "accepted"
 - **PENTING:** jangan bikin script node-PALSU. Pruned node ini sudah solusi sah.
 
-## SERVICES
-- System: `awp-miner`, `awp-dashboard`, `awp-tunnel`, `awp-lt`, `zcashd`
+## SERVICES TAMBAHAN
+- Bridge: `vps-bridge.service` (Python di :18790) + `vps-tunnel.service` (cloudflared quick tunnel)
+- System AWP/Zcash: `awp-miner`, `awp-dashboard`, `awp-tunnel`, `awp-lt`, `zcashd`
 - User: `openclaw-gateway` (port 18789) — `systemctl --user ...`
-- Cek: `ssh root@187.127.110.187 "systemctl is-active awp-miner zcashd awp-dashboard"`
+- Cek: `vps "systemctl is-active awp-miner zcashd awp-dashboard vps-bridge vps-tunnel"`
 
 ## LOGS
 - AWP miner: `/var/log/awp/miner-v4.log`
 - Zcash: `journalctl -u zcashd.service`
+- Bridge: `/var/log/awp/vps-bridge.log`
+- Tunnel: `/var/log/awp/vps-tunnel.log`
 - Disk watchdog: `/var/log/awp/zcash-disk.log`
 - Dashboard cron: `/var/log/awp/dashboard.log`
 
@@ -56,4 +85,7 @@ Setelah itu semua command VPS dijalankan via: `ssh root@187.127.110.187 "<comman
 - **Jangan sebut wallet count ke Discord/external** (Sybil discretion).
 - Solusi harus **gratis** (user di Claude Max, tapi no extra cost untuk runtime/AI lain).
 - **Jawaban singkat** — user pemula, hindari paragraf panjang & opsi teknis tanpa terjemahan.
-- Untuk edit file di VPS: jangan minta user copy-paste; SSH dan edit langsung (`ssh root@... "cat > /path"` atau pakai `scp`).
+- Untuk edit file di VPS: jangan minta user copy-paste; pakai `vps "cat > /path/file <<'EOF' ... EOF"` atau base64 transfer.
+
+## KALAU BRIDGE ERROR (URL berubah)
+Quick tunnel URL bisa berubah jika service restart. Kalau `vps "..."` error "Connection refused" atau 404, mungkin URL berubah. Solusi: minta user generate URL baru dari laptop, atau cek `vps_url.txt` di repo `claude-vps` (akan auto-update di v2).
