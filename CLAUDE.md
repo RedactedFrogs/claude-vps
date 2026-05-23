@@ -3,10 +3,12 @@
 File ini dibaca otomatis setiap sesi baru. Owner: **Hermawan** (pemula, Bahasa Indonesia). Jawab singkat. Kerjakan sendiri via bridge VPS, jangan suruh user.
 
 ## BOOTSTRAP — WAJIB JALANKAN PERTAMA KALI
-Sebelum apapun, jalankan ini di bash agar fungsi `vps` aktif:
+Sebelum apapun, jalankan ini di bash agar fungsi `vps` aktif. URL bridge dibaca dari `bridge_url.txt` di repo (VPS auto-publish saat URL rotate, jadi selalu fresh — `git pull` dulu agar dapat versi terbaru):
 
 ```bash
-export VPS_BRIDGE_URL="https://extraordinary-dishes-symptoms-lighter.trycloudflare.com"
+git pull --quiet 2>/dev/null || true
+export VPS_BRIDGE_URL=$(cat bridge_url.txt | tr -d '[:space:]')
+echo "Bridge URL = $VPS_BRIDGE_URL"
 # Token disuplai dari Cloud env var VPS_BRIDGE_TOKEN
 
 vps() {
@@ -87,5 +89,7 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`**. Contoh:
 - **Jawaban singkat** — user pemula, hindari paragraf panjang & opsi teknis tanpa terjemahan.
 - Untuk edit file di VPS: jangan minta user copy-paste; pakai `vps "cat > /path/file <<'EOF' ... EOF"` atau base64 transfer.
 
-## KALAU BRIDGE ERROR (URL berubah)
-Quick tunnel URL bisa berubah jika service restart. Kalau `vps "..."` error "Connection refused" atau 404, mungkin URL berubah. Solusi: minta user generate URL baru dari laptop, atau cek `vps_url.txt` di repo `claude-vps` (akan auto-update di v2).
+## KALAU BRIDGE ERROR
+1. Re-run bootstrap untuk fetch URL terbaru (VPS watchdog cron 2-min mungkin belum sempat publish).
+2. Kalau masih error, cek `vps_url.txt` di repo `claude-vps` raw. Kalau URL nya outdated >5 menit, tunnel service mungkin down — minta user SSH ke laptop & jalankan `systemctl restart vps-tunnel`.
+3. Watchdog log: `/var/log/awp/bridge-watchdog.log` (lewat `vps "tail /var/log/awp/bridge-watchdog.log"`).
