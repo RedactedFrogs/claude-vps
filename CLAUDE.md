@@ -89,6 +89,37 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`**. Contoh:
 - **Jawaban singkat** — user pemula, hindari paragraf panjang & opsi teknis tanpa terjemahan.
 - Untuk edit file di VPS: jangan minta user copy-paste; pakai `vps "cat > /path/file <<'EOF' ... EOF"` atau base64 transfer.
 
+## ATURAN KERJA — ZERO ASUMSI (WAJIB)
+
+User sudah berkali-kali rugi waktu karena asumsi saya keliru. **Pelanggaran aturan ini = pekerjaan tidak diterima.**
+
+### Larangan absolut
+- **Jangan pernah bilang "kemungkinan", "mungkin karena", "pre-launch", "incident mode"** sebelum baca source code / git log / dokumen langsung yang membuktikan.
+- **Jangan generalisasi dari 1 sample** (mis: lihat 1 stats field aneh → jangan langsung simpulkan "project belum live").
+- **Jangan stop di "first explanation that fits"** — selalu cek 2-3 sumber independent dulu sebelum simpulkan.
+- **Jangan kerjakan infrastruktur sampingan** (backup, watchdog, optimasi) selama goal utama belum tervalidasi bisa tercapai. Goal utama dulu, sampai terbukti benar atau terbukti buntu.
+
+### Wajib sebelum simpulkan apapun
+1. **Baca source code** kalau ada (repo lokal `/root/dz-audit/`, atau git clone fresh).
+2. **Baca git log** `--since="7 days ago"` untuk lihat perubahan terbaru.
+3. **Baca website target langsung** (frontend source di repo, bukan WebFetch karena SPA kosong).
+4. **Test empirik dari MULTIPLE angle** — fresh wallet, IP berbeda, host alternatif, semua varian field.
+5. **Cek deploy config** (fly.toml, Dockerfile, .env.example) untuk env vars yang aktif.
+
+### Validasi hasil — wajib backend-verified
+Hasil pekerjaan **harus terlihat di backend pihak ketiga**, bukan cuma di file lokal:
+- "Register wallet" = wallet harus muncul di dashboard publik mereka, bukan cuma `state.json` di VPS.
+- "Submit proof" = harus ada `accepted_proofs++` di stats API mereka, bukan cuma log lokal.
+- "Sync node" = harus `verificationprogress=1.0` di getblockchaininfo, bukan cuma `is-active`.
+- "Watchdog jalan" = harus ada bukti action di log, bukan cuma `is-active`.
+
+Setiap claim "DONE/SUCCESS" tanpa bukti backend = false positive. Stop, balik, verifikasi dulu.
+
+### Kalau buntu / blocker external
+- Bilang **terang-terangan**: "blocker = X di server pihak Y, saya tidak bisa bypass, butuh A/B/C dari user".
+- **Jangan bikin alasan** ("project belum launch", "incident mode") tanpa bukti commit / tweet langsung.
+- **Jangan kerjakan side-task** sebagai pengganti — itu buang waktu user.
+
 ## KALAU BRIDGE ERROR
 1. Re-run bootstrap untuk fetch URL terbaru (VPS watchdog cron 2-min mungkin belum sempat publish).
 2. Kalau masih error, cek `vps_url.txt` di repo `claude-vps` raw. Kalau URL nya outdated >5 menit, tunnel service mungkin down — minta user SSH ke laptop & jalankan `systemctl restart vps-tunnel`.
