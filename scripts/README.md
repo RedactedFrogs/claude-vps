@@ -1,5 +1,38 @@
 # Scripts
 
+## DePINZcash Multi-Wallet (relay mode, 250 wallet)
+
+Strategi: 250 wallet × 1 node each, semua push proof via API (relay mode). Tidak butuh URL tunnel — server tidak polling kita.
+
+| Script | Fungsi | Lokasi VPS |
+|---|---|---|
+| `multi_gen_wallets.py` | Generate 250 Solana keypair | `/root/.depinzcash-multi/scripts/gen_wallets.py` |
+| `multi_register_one.py` | Register 1 wallet via proxy N | `/root/.depinzcash-multi/scripts/register_one.py` |
+| `multi_orchestrator.py` | Staggered loop register semua wallet (30-60s) | `/root/.depinzcash-multi/scripts/orchestrator.py` |
+| `multi_proof_submitter.py` | Push proof tiap 5 menit untuk semua registered wallet | `/root/.depinzcash-multi/scripts/proof_submitter.py` |
+
+**Systemd services:**
+- `depinzcash-multi-orchestrator.service` — staggered registration loop
+- `depinzcash-multi-submitter.service` — 5-min proof submission
+
+**Operasi:**
+```bash
+# Status
+vps "systemctl is-active depinzcash-multi-orchestrator depinzcash-multi-submitter"
+
+# Progress
+vps "ls /root/.depinzcash-multi/state/ | wc -l"
+vps "tail -20 /var/log/awp/depinzcash-multi.log"
+
+# Stop
+vps "systemctl disable --now depinzcash-multi-orchestrator depinzcash-multi-submitter"
+```
+
+Proxies: `/root/.awp-mining/proxies.txt` (shared dengan AWP, 250 baris). Wallet N pakai proxy line N.
+
+---
+
+
 ## zcash_awp_failover.py
 
 Bidirectional flipper untuk balance resource zcashd ↔ AWP berdasarkan kondisi AWP API. Systemd timer trigger tiap 5 menit.
