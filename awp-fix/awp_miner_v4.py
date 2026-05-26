@@ -50,7 +50,7 @@ _progress = {
     "api_green_since": 0,        # epoch when PoW endpoint last became usable (0 = not green)
     "api_red_since": 0,          # epoch when PoW endpoint last became unusable (0 = not red)
     "wallets_total": 0, "wallets_done": 0,
-    "round_accepted": 0, "round_errors": 0, "round_rate_limited": 0,
+    "round_accepted": 0, "round_errors": 0, "round_rate_limited": 0, "round_duplicate": 0, "round_rejected": 0,
     "lifetime_accepted": 0, "active_now": 0, "state": "starting",
 }
 
@@ -207,7 +207,8 @@ def get_client(wallet):
         # (25-90s); a shorter read timeout fails every PoW answer.
         client._client = httpx.Client(
             base_url=client._base_url,
-            timeout=httpx.Timeout(connect=15.0, read=90.0, write=15.0, pool=10.0),
+            timeout=httpx.Timeout(connect=15.0, read=90.0, write=15.0, pool=60.0),
+            limits=httpx.Limits(max_connections=200, max_keepalive_connections=100),
             headers=dict(client._client.headers))
         # ── ENV-RACE FIX: pin per-wallet env onto signer._run so awp-wallet subprocess
         # always signs with the right wallet, regardless of which thread set os.environ
@@ -360,6 +361,8 @@ def mine_wallet(wallet):
             _progress["round_accepted"] += res["accepted"]
             _progress["round_errors"] += res["errors"]
             _progress["round_rate_limited"] += res["rate_limited"]
+            _progress["round_duplicate"] += res.get("duplicate", 0)
+            _progress["round_rejected"] += res.get("rejected", 0)
             _progress["lifetime_accepted"] += res["accepted"]
     return res
 
@@ -377,7 +380,7 @@ def run_round(wallets, rnd):
     load_pool()
     with _prog_lock:
         _progress.update(round=rnd, wallets_total=len(wallets), wallets_done=0,
-                         round_accepted=0, round_errors=0, round_rate_limited=0,
+                         round_accepted=0, round_errors=0, round_rate_limited=0, round_duplicate=0, round_rejected=0,
                          active_now=0, state="mining")
     save_progress()
     log.info(f"=== round {rnd} START — {len(wallets)} wallets, conc={POOL_CONC} ===")
@@ -391,6 +394,7 @@ def run_round(wallets, rnd):
     save_progress()
     p = _progress
     log.info(f"=== round {rnd} DONE — accepted={p['round_accepted']} "
+             f"dup={p.get('round_duplicate',0)} rej={p.get('round_rejected',0)} "
              f"errors={p['round_errors']} rate_limited={p['round_rate_limited']} ===")
 
 
