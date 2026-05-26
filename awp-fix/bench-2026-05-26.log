@@ -1,0 +1,67 @@
+=== bench START 2026-05-26T15:10:30Z ===
+2026-05-26T15:10:30Z === case A_baseline conc=60 hb=on START ===
+2026-05-26T15:12:11Z case=A_baseline T0  {"wallets": 220, "tasks": 694, "ts": 1779808331}
+2026-05-26T15:30:15Z case=A_baseline T20 {"wallets": 232, "tasks": 872, "ts": 1779809415}
+2026-05-26T15:30:15Z case=A_baseline miner={
+  "updated": 1779809412,
+  "round": 5,
+  "api": "fast",
+  "api_ms": 745,
+  "pow_ok": true,
+  "api_green_since": 1779808233,
+  "api_red_since": 0,
+  "wallets_total": 250,
+  "wallets_done": 28,
+  "round_accepted": 7,
+  "round_errors": 3,
+  "round_rate_limited": 18,
+  "lifetime_accepted": 191,
+  "active_now": 60,
+  "state": "mining",
+  "updated_iso": "2026-05-26 15:30:12 UTC"
+}
+2026-05-26T15:30:15Z === case B_low_conc conc=30 hb=on START ===
+2026-05-26T15:31:55Z case=B_low_conc T0  {"wallets": 232, "tasks": 888, "ts": 1779809515}
+2026-05-26T15:49:59Z case=B_low_conc T20 {"wallets": 241, "tasks": 1076, "ts": 1779810598}
+2026-05-26T15:49:59Z case=B_low_conc miner={
+  "updated": 1779810595,
+  "round": 5,
+  "api": "fast",
+  "api_ms": 742,
+  "pow_ok": true,
+  "api_green_since": 1779809418,
+  "api_red_since": 0,
+  "wallets_total": 250,
+  "wallets_done": 111,
+  "round_accepted": 21,
+  "round_errors": 6,
+  "round_rate_limited": 84,
+  "lifetime_accepted": 202,
+  "active_now": 30,
+  "state": "mining",
+  "updated_iso": "2026-05-26 15:49:55 UTC"
+}
+2026-05-26T15:49:59Z === case C_no_hb conc=60 hb=off START ===
+2026-05-26T15:51:39Z case=C_no_hb T0  {"wallets": 242, "tasks": 1091, "ts": 1779810699}
+2026-05-26T16:09:43Z case=C_no_hb T20 {"wallets": 249, "tasks": 1768, "ts": 1779811783}
+2026-05-26T16:09:43Z case=C_no_hb miner={
+  "updated": 1779811781,
+  "round": 6,
+  "api": "fast",
+  "api_ms": 749,
+  "pow_ok": true,
+  "api_green_since": 1779810602,
+  "api_red_since": 0,
+  "wallets_total": 250,
+  "wallets_done": 232,
+  "round_accepted": 112,
+  "round_errors": 23,
+  "round_rate_limited": 97,
+  "lifetime_accepted": 692,
+  "active_now": 18,
+  "state": "mining",
+  "updated_iso": "2026-05-26 16:09:41 UTC"
+}
+restoring stable config
+=== bench DONE 2026-05-26T16:09:43Z ===
+bench_log=/var/log/awp/bench-20260526-151030.log

@@ -327,12 +327,7 @@ def mine_wallet(wallet):
         with _prog_lock:
             _progress["active_now"] += 1
         client = get_client(wallet)
-        for _ in range(3):
-            try:
-                client.send_miner_heartbeat(client_name="awp-miner")
-                break
-            except Exception:
-                time.sleep(1)
+        # benchmark variant — heartbeat skipped; cron handles it
         for art in arts:
             if not clear_gate(client):
                 res["errors"] += 1
