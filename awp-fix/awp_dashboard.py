@@ -28,21 +28,25 @@ def run(cmd, timeout=6):
 
 # ---- status checks ----
 def check_api():
-    """Real API status — from the miner's PoW probe, NOT the shallow /healthz.
-    /healthz can return 200 while the API is actually unusable (PoW endpoint
-    hangs). Returns (ok, detail, green_since_epoch, red_since_epoch)."""
+    """Real API status — 3-state: green (stable), yellow (unstable), red (down).
+    Returns (status, detail, green_since, red_since, api_ms)."""
     try:
         p = json.loads(Path("/var/cache/awp/miner-progress.json").read_text())
     except Exception:
-        return False, "status belum diketahui", 0, 0
+        return "red", "status belum diketahui", 0, 0, 0
     pow_ok = p.get("pow_ok")
+    api_ms = int(p.get("api_ms", 0) or 0)
     green_since = int(p.get("api_green_since", 0) or 0)
     red_since = int(p.get("api_red_since", 0) or 0)
-    if pow_ok is True:
-        return True, "UP — PoW endpoint berfungsi (submit bisa jalan)", green_since, 0
+    uptime = int(time.time()) - green_since if green_since > 0 else 0
     if pow_ok is False:
-        return False, "DOWN — PoW endpoint hang (platform-side, bukan kita)", 0, red_since
-    return False, "belum dicek miner", 0, 0
+        return "red", "DOWN — PoW endpoint hang (platform-side, bukan kita)", 0, red_since, api_ms
+    if pow_ok is True:
+        # Yellow if slow (>2s) OR just-recovered (<60s uptime)
+        if api_ms >= 2000 or uptime < 60:
+            return "yellow", f"UNSTABLE — {api_ms}ms response (slow/recovering)", green_since, 0, api_ms
+        return "green", "STABLE — miner can submit reliably", green_since, 0, api_ms
+    return "red", "belum dicek miner", 0, 0, 0
 
 
 def check_miner():
@@ -167,7 +171,8 @@ def fmt_uptime(secs):
 
 
 def generate():
-    api_ok, api_d, api_green_since, api_red_since = check_api()
+    api_status, api_d, api_green_since, api_red_since, api_ms = check_api()
+    api_ok = api_status == "green"
     miner_ok, miner_d = check_miner()
     pool_ok, pool_d = check_pool()
     oauth_ok, oauth_d = check_oauth()
@@ -188,7 +193,7 @@ def generate():
         api_dur_html = (f'<span class="sd api-down" data-since="{api_red_since}" '
                         f'style="color:#f88;font-weight:bold">'
                         f'mati {fmt_uptime(time.time() - api_red_since)}</span>')
-    api_item = (f'<div class="si"><span class="dot {"green" if api_ok else "red"}"></span>'
+    api_item = (f'<div class="si"><span class="dot {api_status}"></span>'
                 f'<span class="sl">API</span>'
                 f'<span class="sd">{html.escape(api_d)}</span>{api_dur_html}</div>')
     status = (api_item + dot(miner_ok, "Miner", miner_d) +
@@ -267,7 +272,7 @@ tr:hover td{{background:#1a1a1a}} a.addr{{color:#6cf;text-decoration:none}}
   <div class="stat"><div class="l">Wallet selesai</div><div class="v">{m_done}/{m_wtotal}</div></div>
   <div class="stat err"><div class="l">Rate-limited</div><div class="v">{m_rrl}</div></div>
   <div class="stat err"><div class="l">Errors</div><div class="v">{m_rerr}</div></div>
-  <div class="stat {'acc' if api_ok else 'err'}"><div class="l">API platform</div><div class="v" style="font-size:24px">{'UP' if api_ok else 'DOWN'}<br><span class="{'api-up' if api_ok else 'api-down'}" data-since="{api_green_since if api_ok else api_red_since}" style="font-size:12px;color:#888">{(('nyala ' if api_ok else 'mati ') + fmt_uptime(time.time() - (api_green_since if api_ok else api_red_since))) if (api_green_since or api_red_since) else html.escape(api_d)}</span></div></div>
+  <div class="stat {("acc" if api_status=="green" else "warn" if api_status=="yellow" else "err")}"><div class="l">API platform</div><div class="v" style="font-size:24px">{'UP' if api_ok else 'DOWN'}<br><span class="{'api-up' if api_ok else 'api-down'}" data-since="{api_green_since if api_ok else api_red_since}" style="font-size:12px;color:#888">{(('nyala ' if api_ok else 'mati ') + fmt_uptime(time.time() - (api_green_since if api_ok else api_red_since))) if (api_green_since or api_red_since) else html.escape(api_d)}</span></div></div>
 </div>
 
 <div class="sect">Reward Balances <span class="note">(on-chain, updated {bal_upd})</span></div>
