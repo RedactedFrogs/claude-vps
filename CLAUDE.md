@@ -115,14 +115,38 @@ User sudah berkali-kali rugi waktu karena asumsi saya keliru. **Pelanggaran atur
 4. **Test empirik dari MULTIPLE angle** — fresh wallet, IP berbeda, host alternatif, semua varian field.
 5. **Cek deploy config** (fly.toml, Dockerfile, .env.example) untuk env vars yang aktif.
 
-### Validasi hasil — wajib backend-verified
-Hasil pekerjaan **harus terlihat di backend pihak ketiga**, bukan cuma di file lokal:
-- "Register wallet" = wallet harus muncul di dashboard publik mereka, bukan cuma `state.json` di VPS.
-- "Submit proof" = harus ada `accepted_proofs++` di stats API mereka, bukan cuma log lokal.
-- "Sync node" = harus `verificationprogress=1.0` di getblockchaininfo, bukan cuma `is-active`.
-- "Watchdog jalan" = harus ada bukti action di log, bukan cuma `is-active`.
+### Validasi hasil — WAJIB backend-verified (TIDAK ADA PENGECUALIAN)
 
-Setiap claim "DONE/SUCCESS" tanpa bukti backend = false positive. Stop, balik, verifikasi dulu.
+**Setiap kali saya akan bilang "jalan", "sukses", "DONE", "aktif", "terdaftar", atau klaim positif apapun → STOP. Sebelum kalimat itu keluar, saya WAJIB:**
+
+1. **Jalankan probe backend pihak ketiga** (API mereka, dashboard mereka, contract on-chain) — bukan log lokal, bukan `systemctl is-active`, bukan `ps -ef`, bukan kode source.
+2. **Paste output probe mentah ke pesan yang sama** sebagai bukti. Tanpa output = klaim batal.
+3. **Kalau probe tidak bisa dilakukan**, bilang terang-terangan: "Saya BELUM verifikasi backend, jadi tidak bisa klaim sukses".
+
+**Contoh translasi action → probe wajib:**
+| Action | Log lokal (DILARANG jadi bukti) | Probe backend (WAJIB) |
+|---|---|---|
+| "Miner agresif jalan" | `accepted=N` di log | `GET /api/mining/v1/miners/me/stats` untuk SAMPLE wallet, paste credit/last_heartbeat |
+| "Register wallet sukses" | `state.json` updated | Wallet muncul di dashboard publik / `GET profile/miners/{addr}` 200 OK |
+| "Submit proof sukses" | log lokal "accepted" | `GET epochs/{id}/settlement-results` → `confirmed_submission_count++` |
+| "Node sync" | `systemctl is-active zcashd` | `getblockchaininfo` → `verificationprogress=1.0` |
+| "Watchdog jalan" | cron installed | Log file ada bukti action (bukan cuma startup), atau sentinel file tercipta |
+| "Cron diinstall" | `crontab -l` show baris | Tunggu trigger, lalu cek log output |
+
+**Aturan tambahan:**
+- **Setiap pelanggaran = work tidak diterima, harus ulang dari awal.**
+- **Jangan asumsi karena kode bilang X = X terjadi.** Kode 250 wallet ≠ 250 wallet kedaftar di server. Buktikan dengan probe per-wallet (atau sampling representatif).
+- **Setiap commit ke integrasi external** (AWP, DePINZcash, exchange API, dll) → sebelum push, probe endpoint + paste output ke commit message atau pesan user.
+- **Setiap "kerja selesai" report** → format wajib:
+  ```
+  Action: <apa yang dilakukan>
+  Backend probe: <command yang dijalankan>
+  Output mentah: <copy-paste output>
+  Verdict: <sukses/gagal dengan alasan>
+  ```
+- **Pelanggaran historis (jangan ulangi):**
+  - 25 Mei 2026: saya klaim "miner jalan, 250 wallet" 5+ hari berturut tanpa pernah probe `/api/mining/v1/miners/me/stats`. Ternyata cuma 15 dari 250 wallet kedaftar di server. User rugi 5 hari × kapasitas mining (~16x reward potential).
+  - Sumber error: stop di "first explanation that fits" (log lokal accepted=11 keliatan ok), tidak proaktif probe backend, treat kode source = ground truth.
 
 ### Kalau buntu / blocker external
 - Bilang **terang-terangan**: "blocker = X di server pihak Y, saya tidak bisa bypass, butuh A/B/C dari user".
