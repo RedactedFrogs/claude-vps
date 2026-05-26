@@ -1,0 +1,77 @@
+# Scripts
+
+## DePINZcash Multi-Wallet (relay mode, 250 wallet)
+
+Strategi: 250 wallet × 1 node each, semua push proof via API (relay mode). Tidak butuh URL tunnel — server tidak polling kita.
+
+| Script | Fungsi | Lokasi VPS |
+|---|---|---|
+| `multi_gen_wallets.py` | Generate 250 Solana keypair | `/root/.depinzcash-multi/scripts/gen_wallets.py` |
+| `multi_register_one.py` | Register 1 wallet via proxy N | `/root/.depinzcash-multi/scripts/register_one.py` |
+| `multi_orchestrator.py` | Staggered loop register semua wallet (30-60s) | `/root/.depinzcash-multi/scripts/orchestrator.py` |
+| `multi_proof_submitter.py` | Push proof tiap 5 menit untuk semua registered wallet | `/root/.depinzcash-multi/scripts/proof_submitter.py` |
+
+**Systemd services:**
+- `depinzcash-multi-orchestrator.service` — staggered registration loop
+- `depinzcash-multi-submitter.service` — 5-min proof submission
+
+**Operasi:**
+```bash
+# Status
+vps "systemctl is-active depinzcash-multi-orchestrator depinzcash-multi-submitter"
+
+# Progress
+vps "ls /root/.depinzcash-multi/state/ | wc -l"
+vps "tail -20 /var/log/awp/depinzcash-multi.log"
+
+# Stop
+vps "systemctl disable --now depinzcash-multi-orchestrator depinzcash-multi-submitter"
+```
+
+Proxies: `/root/.awp-mining/proxies.txt` (shared dengan AWP, 250 baris). Wallet N pakai proxy line N.
+
+---
+
+
+## zcash_awp_failover.py
+
+Bidirectional flipper untuk balance resource zcashd ↔ AWP berdasarkan kondisi AWP API. Systemd timer trigger tiap 5 menit.
+
+**Decision rule (timestamp-based):**
+- Scan AWP log, ambil signal terbaru:
+  - Down: `PoW endpoint DOWN`
+  - Healthy: `PoW endpoint OK` | `round X START` | `round X DONE — accepted=N (N>0)`
+- Latest signal menang, asal masih dalam 30 menit terakhir
+- `AWP=healthy & zcashd=accelerated` → revert
+- `AWP=down & zcashd=baseline` → re-accelerate
+- Stale (>30 min) atau no signal → no change
+
+**Live properties yang di-flip (no restart):**
+| State | CPUQuota | IOWeight | Nice |
+|---|---|---|---|
+| Accelerated | 200% | 200 | 0 |
+| Baseline | 100% | 20 | 15 |
+
+`dbcache=2000` dan `par=2` permanent di `zcash.conf` (tidak di-flip).
+
+**Lokasi di VPS:**
+- Script: `/usr/local/bin/zcash_awp_failover.py`
+- Service: `/etc/systemd/system/zcash-awp-failover.service`
+- Timer: `/etc/systemd/system/zcash-awp-failover.timer`
+- Log: `/var/log/awp/zcash-failover.log`
+
+**Operasi:**
+
+```bash
+# Cek log
+vps "tail -20 /var/log/awp/zcash-failover.log"
+
+# Cek timer
+vps "systemctl list-timers zcash-awp-failover.timer"
+
+# Test dry-run (no side-effect)
+vps "/usr/local/bin/zcash_awp_failover.py --dry-run"
+
+# Matikan permanen
+vps "systemctl disable --now zcash-awp-failover.timer"
+```
