@@ -312,6 +312,9 @@ def submit_one(client, article):
             return "rate_limited"
         if sc == 428:
             return "pow"
+        if sc == 409:
+            # server dedup — article already submitted globally. Mark consumed.
+            return "duplicate"
     return "error"
 
 
