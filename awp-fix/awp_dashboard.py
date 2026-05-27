@@ -158,16 +158,13 @@ def dot(ok, label, detail):
 
 
 def fmt_uptime(secs):
-    """Scale the unit: detik < 60s, menit < 60min, jam beyond."""
+    """HH:MM:SS format."""
     secs = int(secs)
-    if secs < 0:
-        secs = 0
-    if secs < 60:
-        return f"{secs} detik"
-    if secs < 3600:
-        return f"{secs // 60} menit"
-    h, m = secs // 3600, (secs % 3600) // 60
-    return f"{h} jam {m} menit"
+    if secs < 0: secs = 0
+    h = secs // 3600
+    m = (secs % 3600) // 60
+    s = secs % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 def generate():
@@ -276,7 +273,6 @@ tr:hover td{{background:#1a1a1a}} a.addr{{color:#6cf;text-decoration:none}}
   <div class="stat"><div class="l">Wallet selesai</div><div class="v">{m_done}/{m_wtotal}</div></div>
   <div class="stat err"><div class="l">Rate-limited</div><div class="v">{m_rrl}</div></div>
   <div class="stat err"><div class="l">Errors</div><div class="v">{m_rerr}</div></div>
-  <div class="stat {("acc" if api_status=="green" else "warn" if api_status=="yellow" else "err")}"><div class="l">API platform</div><div class="v" style="font-size:24px">{("STABIL" if api_status=="green" else "UNSTABLE" if api_status=="yellow" else "DOWN")}<br><span class="{("api-up" if api_status=="green" else "api-mid" if api_status=="yellow" else "api-down")}" data-since="{api_green_since if (api_status in ("green","yellow") and api_green_since>0) else (api_red_since if api_red_since>0 else 0)}" style="font-size:12px;color:#888">{((("hijau " if api_status=="green" else "kuning ") + fmt_uptime(time.time() - api_green_since)) if (api_status in ("green","yellow") and api_green_since>0) else (("merah " + fmt_uptime(time.time() - api_red_since)) if (api_status=="red" and api_red_since>0) else "belum tracked"))}</span></div></div>
 </div>
 
 <div class="sect">Reward Balances <span class="note">(on-chain, updated {bal_upd})</span></div>
@@ -306,9 +302,9 @@ t.classList.add('active');
 document.getElementById('p-'+t.dataset.t).classList.add('active');}}));
 document.querySelectorAll('.panel').forEach(p=>{{p.scrollTop=p.scrollHeight}});
 function fmtUp(s){{s=Math.floor(s);if(s<0)s=0;
-if(s<60)return s+' detik';
-if(s<3600)return Math.floor(s/60)+' menit';
-return Math.floor(s/3600)+' jam '+Math.floor((s%3600)/60)+' menit';}}
+var h=Math.floor(s/3600),m=Math.floor((s%3600)/60),sec=s%60;
+function p(n){{return n<10?'0'+n:n;}}
+return p(h)+':'+p(m)+':'+p(sec);}}
 function tickUp(){{var now=Math.floor(Date.now()/1000);
 document.querySelectorAll('.api-up').forEach(function(el){{
 var since=parseInt(el.dataset.since||'0');
