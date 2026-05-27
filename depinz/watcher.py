@@ -72,9 +72,9 @@ def main():
     STATE_FILE.write_text(json.dumps(new_state, indent=2))
 
     prev_code = prev.get('last_status')
-    flipped = (prev_code == 403 and code != 403) or (
-        prev_code != 403 and code != 403 and not SENTINEL.exists()
-    )
+    # only treat as flip if server actually responded (not 403 and not network error -1)
+    real_response = code in (200, 422, 200, 201, 400, 401, 409)
+    flipped = real_response and (prev_code == 403 or (prev_code != 403 and not SENTINEL.exists()))
     if flipped:
         SENTINEL.write_text(json.dumps({
             'flipped_at': now,
