@@ -272,7 +272,7 @@ tr:hover td{{background:#1a1a1a}} a.addr{{color:#6cf;text-decoration:none}}
   <div class="stat"><div class="l">Wallet selesai</div><div class="v">{m_done}/{m_wtotal}</div></div>
   <div class="stat err"><div class="l">Rate-limited</div><div class="v">{m_rrl}</div></div>
   <div class="stat err"><div class="l">Errors</div><div class="v">{m_rerr}</div></div>
-  <div class="stat {("acc" if api_status=="green" else "warn" if api_status=="yellow" else "err")}"><div class="l">API platform</div><div class="v" style="font-size:24px">{'UP' if api_ok else 'DOWN'}<br><span class="{'api-up' if api_ok else 'api-down'}" data-since="{api_green_since if api_ok else api_red_since}" style="font-size:12px;color:#888">{(('nyala ' if api_ok else 'mati ') + fmt_uptime(time.time() - (api_green_since if api_ok else api_red_since))) if (api_green_since or api_red_since) else html.escape(api_d)}</span></div></div>
+  <div class="stat {("acc" if api_status=="green" else "warn" if api_status=="yellow" else "err")}"><div class="l">API platform</div><div class="v" style="font-size:24px">{("STABIL" if api_status=="green" else "UNSTABLE" if api_status=="yellow" else "DOWN")}<br><span class="{("api-up" if api_status=="green" else "api-mid" if api_status=="yellow" else "api-down")}" data-since="{api_green_since if (api_status in ("green","yellow") and api_green_since>0) else (api_red_since if api_red_since>0 else 0)}" style="font-size:12px;color:#888">{((("hijau " if api_status=="green" else "kuning ") + fmt_uptime(time.time() - api_green_since)) if (api_status in ("green","yellow") and api_green_since>0) else (("merah " + fmt_uptime(time.time() - api_red_since)) if (api_status=="red" and api_red_since>0) else "belum tracked"))}</span></div></div>
 </div>
 
 <div class="sect">Reward Balances <span class="note">(on-chain, updated {bal_upd})</span></div>
@@ -309,6 +309,12 @@ function tickUp(){{var now=Math.floor(Date.now()/1000);
 document.querySelectorAll('.api-up').forEach(function(el){{
 var since=parseInt(el.dataset.since||'0');
 if(since>0)el.textContent='nyala '+fmtUp(now-since);}});
+document.querySelectorAll('.api-mid').forEach(function(el){{
+var since=parseInt(el.dataset.since||'0');
+if(since>0)el.textContent='kuning '+fmtUp(now-since);}});
+document.querySelectorAll('.api-up').forEach(function(el){{
+var since=parseInt(el.dataset.since||'0');
+if(since>0)el.textContent='hijau '+fmtUp(now-since);}});
 document.querySelectorAll('.api-down').forEach(function(el){{
 var since=parseInt(el.dataset.since||'0');
 if(since>0)el.textContent='mati '+fmtUp(now-since);}});}}
