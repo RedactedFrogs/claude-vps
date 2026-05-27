@@ -231,7 +231,7 @@ def generate():
     m_life    = ms.get("lifetime_accepted", 0)
     m_upd     = ms.get("updated_iso", "(belum)")
 
-    return f"""<!DOCTYPE html><html><head><meta charset="utf-8">
+    return f"""<!DOCTYPE html><html><head><meta http-equiv="refresh" content="30"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><meta charset="utf-8">
 <meta http-equiv="refresh" content="30"><title>AWP Dashboard</title><style>
 *{{box-sizing:border-box}}
 body{{font-family:'Courier New',monospace;background:#0a0a0a;color:#ddd;padding:20px;max-width:1300px;margin:auto}}
