@@ -319,6 +319,29 @@ document.querySelectorAll('.api-down').forEach(function(el){{
 var since=parseInt(el.dataset.since||'0');
 if(since>0)el.textContent='mati '+fmtUp(now-since);}});}}
 setInterval(tickUp,1000);tickUp();
+// Pull-to-refresh: drag down at top of page > 80px = reload
+var ptrStartY=0, ptrDist=0, ptrIndicator=null;
+document.addEventListener('touchstart', function(e){{
+  if(window.scrollY===0){{ ptrStartY = e.touches[0].pageY; }}
+}});
+document.addEventListener('touchmove', function(e){{
+  if(window.scrollY===0 && ptrStartY){{
+    ptrDist = e.touches[0].pageY - ptrStartY;
+    if(ptrDist > 30){{
+      if(!ptrIndicator){{
+        ptrIndicator = document.createElement('div');
+        ptrIndicator.style.cssText = 'position:fixed;top:8px;left:50%;transform:translateX(-50%);background:#1a1a2e;color:#5cf;padding:8px 16px;border-radius:20px;font-family:monospace;font-size:12px;z-index:9999;border:1px solid #5cf;';
+        document.body.appendChild(ptrIndicator);
+      }}
+      ptrIndicator.textContent = ptrDist > 80 ? '↓ lepas untuk refresh' : '↓ tarik ke bawah...';
+    }}
+  }}
+}});
+document.addEventListener('touchend', function(e){{
+  if(ptrIndicator){{ ptrIndicator.remove(); ptrIndicator=null; }}
+  if(window.scrollY===0 && ptrDist > 80){{ location.reload(); }}
+  ptrStartY=0; ptrDist=0;
+}});
 </script></body></html>"""
 
 
