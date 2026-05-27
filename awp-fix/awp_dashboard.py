@@ -185,14 +185,18 @@ def generate():
     reg = sum(1 for _, _, s in wallets if "registered" in s and "STUCK" not in s and "pending" not in s)
 
     api_dur_html = ""
-    if api_ok and api_green_since:
+    if api_status == "green" and api_green_since > 0:
         api_dur_html = (f'<span class="sd api-up" data-since="{api_green_since}" '
                         f'style="color:#4f4;font-weight:bold">'
-                        f'nyala {fmt_uptime(time.time() - api_green_since)}</span>')
-    elif (not api_ok) and api_red_since:
+                        f'hijau {fmt_uptime(time.time() - api_green_since)}</span>')
+    elif api_status == "yellow" and api_green_since > 0:
+        api_dur_html = (f'<span class="sd api-mid" data-since="{api_green_since}" '
+                        f'style="color:#fc0;font-weight:bold">'
+                        f'kuning {fmt_uptime(time.time() - api_green_since)}</span>')
+    elif api_status == "red" and api_red_since > 0:
         api_dur_html = (f'<span class="sd api-down" data-since="{api_red_since}" '
                         f'style="color:#f88;font-weight:bold">'
-                        f'mati {fmt_uptime(time.time() - api_red_since)}</span>')
+                        f'merah {fmt_uptime(time.time() - api_red_since)}</span>')
     api_item = (f'<div class="si"><span class="dot {api_status}"></span>'
                 f'<span class="sl">API</span>'
                 f'<span class="sd">{html.escape(api_d)}</span>{api_dur_html}</div>')
@@ -238,12 +242,12 @@ h1{{color:#4af;margin:0 0 4px}} .sub{{color:#888;font-size:13px;margin-bottom:18
 .bar{{display:flex;gap:22px;align-items:center;padding:14px 20px;background:#1a1a1a;border-radius:8px;margin-bottom:14px;flex-wrap:wrap;border:1px solid #2a2a2a}}
 .si{{display:flex;align-items:center;gap:7px}} .sl{{font-weight:bold;font-size:14px}}
 .sd{{color:#888;font-size:11px}} .dot{{width:10px;height:10px;border-radius:50%;display:inline-block}}
-.dot.green{{background:#1f1;box-shadow:0 0 8px #1f1}} .dot.red{{background:#f33;box-shadow:0 0 8px #f33}}
+.dot.green{{background:#1f1;box-shadow:0 0 8px #1f1}} .dot.yellow{{background:#fc0;box-shadow:0 0 8px #fc0}} .dot.red{{background:#f33;box-shadow:0 0 8px #f33}}
 .stats{{display:flex;gap:12px;margin:14px 0;flex-wrap:wrap}}
 .stat{{padding:14px 20px;background:#1a1a1a;border-radius:8px;min-width:135px}}
 .stat .l{{color:#888;font-size:11px;text-transform:uppercase;letter-spacing:1px}}
 .stat .v{{font-size:30px;font-weight:bold;color:#4af;margin-top:3px}}
-.stat.acc .v{{color:#4f4}} .stat.err .v{{color:#f77}} .stat.gold .v{{color:#ffd700}} .stat.awp .v{{color:#5cf}} .stat.live .v{{color:#ff4}}
+.stat.acc .v{{color:#4f4}} .stat.err .v{{color:#f77}} .stat.warn .v{{color:#fc0}} .stat.gold .v{{color:#ffd700}} .stat.awp .v{{color:#5cf}} .stat.live .v{{color:#ff4}}
 .sect{{color:#4af;font-size:15px;margin:22px 0 6px;font-weight:bold;text-transform:uppercase;letter-spacing:1px}}
 .note{{color:#666;font-size:11px;font-weight:normal;text-transform:none}}
 .tabs{{display:flex;gap:4px;margin-top:8px}}
