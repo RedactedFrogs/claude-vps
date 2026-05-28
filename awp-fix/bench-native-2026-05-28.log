@@ -1,0 +1,17 @@
+=== BENCH START 2026-05-28T19:48:24Z ===
+2026-05-28T19:48:24Z === A_conc8_gap30 conc=8 gap=30 START ===
+safety: load=123.03 mem_avail=4871MB
+2026-05-28T20:01:42Z A_conc8_gap30 RESULT: backend_delta=87 rate=7.45/min load=122.65 mem_avail=4290MB miner_lifetime_acc=127
+2026-05-28T20:01:42Z === B_conc10_gap15 conc=10 gap=15 START ===
+safety: load=121.89 mem_avail=4745MB
+2026-05-28T20:14:43Z B_conc10_gap15 RESULT: backend_delta=91 rate=7.99/min load=122.19 mem_avail=4848MB miner_lifetime_acc=131
+2026-05-28T20:14:43Z === C_conc10_gap60 conc=10 gap=60 START ===
+safety: load=118.04 mem_avail=5005MB
+2026-05-28T20:27:45Z C_conc10_gap60 RESULT: backend_delta=82 rate=7.20/min load=119.72 mem_avail=4799MB miner_lifetime_acc=129
+2026-05-28T20:27:45Z === D_conc15_gap30 conc=15 gap=30 START ===
+safety: load=117.91 mem_avail=5010MB
+2026-05-28T20:41:09Z D_conc15_gap30 RESULT: backend_delta=78 rate=6.84/min load=121.27 mem_avail=4534MB miner_lifetime_acc=136
+2026-05-28T20:41:09Z === E_conc20_gap60 conc=20 gap=60 START ===
+safety: load=120.62 mem_avail=5097MB
+2026-05-28T20:54:17Z E_conc20_gap60 RESULT: backend_delta=87 rate=7.53/min load=129.12 mem_avail=4218MB miner_lifetime_acc=143
+=== BENCH DONE — analyze logs ===
