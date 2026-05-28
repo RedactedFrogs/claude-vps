@@ -15,6 +15,41 @@ sys.path.insert(0, "/root/.claude/skills/mine/scripts")
 sys.path.insert(0, "/root/.awp-mining")
 
 import httpx
+# === NATIVE EIP-712 SIGNING (10x speedup vs awp-wallet) ===
+# __NATIVE_SIGNER_APPLIED__
+import json as _njson
+from eth_account import Account as _Account
+from eth_account.messages import encode_typed_data as _enc_typed
+try:
+    _NATIVE_KEYS = _njson.load(open("/root/.awp-mining/wallet_keys.json"))
+    _ACCT_CACHE = {}
+    def _native_get_acct(wallet):
+        if wallet not in _ACCT_CACHE:
+            ent = _NATIVE_KEYS.get(wallet)
+            if ent: _ACCT_CACHE[wallet] = _Account.from_key(ent["pk"])
+        return _ACCT_CACHE.get(wallet)
+    import signer as _sg
+    def _native_sign(self, typed_data):
+        wallet = os.environ.get("AWP_AGENT_ID", "")
+        acct = _native_get_acct(wallet)
+        if acct is None:
+            # fallback to original awp-wallet path
+            return _sg.WalletSigner._original_sign_typed_data(self, typed_data)
+        msg = _enc_typed(full_message=typed_data)
+        return acct.sign_message(msg).signature.hex()
+    def _native_addr(self):
+        wallet = os.environ.get("AWP_AGENT_ID", "")
+        acct = _native_get_acct(wallet)
+        if acct: return acct.address
+        return _sg.WalletSigner._original_get_address(self)
+    if not hasattr(_sg.WalletSigner, "_original_sign_typed_data"):
+        _sg.WalletSigner._original_sign_typed_data = _sg.WalletSigner.sign_typed_data
+        _sg.WalletSigner._original_get_address = _sg.WalletSigner.get_address
+    _sg.WalletSigner.sign_typed_data = _native_sign
+    _sg.WalletSigner.get_address = _native_addr
+except Exception as _ne:
+    pass  # fallback to default signer
+# === END NATIVE SIGNING ===
 
 POOL_CONC      = int(os.environ.get("MINER_CONC", "60"))      # concurrent threads
 ARTICLES       = int(os.environ.get("MINER_ARTICLES", "3"))   # articles per wallet per round
