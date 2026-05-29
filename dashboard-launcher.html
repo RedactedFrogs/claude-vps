@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="Cache-Control" content="no-cache">
+<title>AWP Dashboard Launcher</title>
+<style>
+body{background:#0a0a14;color:#eee;font-family:monospace;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0;text-align:center}
+.box{padding:40px;border:1px solid #345;border-radius:8px;max-width:500px}
+h1{color:#5cf;margin:0 0 20px;font-size:20px}
+.status{color:#aaa;font-size:14px;margin:8px 0}
+.url{color:#fc0;word-break:break-all;font-size:12px;margin-top:16px}
+.err{color:#f44}
+.btn{display:inline-block;background:#234;color:#5cf;padding:10px 20px;border-radius:4px;margin-top:16px;text-decoration:none;border:1px solid #5cf}
+.btn:hover{background:#345}
+</style>
+</head><body>
+<div class="box">
+<h1>AWP Dashboard Launcher</h1>
+<div id="status" class="status">Mencari URL dashboard...</div>
+<div id="url" class="url"></div>
+<a id="retry" class="btn" href="javascript:loadDash()" style="display:none">Coba lagi</a>
+</div>
+<script>
+var REPO_URL = 'https://raw.githubusercontent.com/RedactedFrogs/claude-vps/main/bridge_url.txt';
+var status = document.getElementById('status');
+var urlDiv = document.getElementById('url');
+var retryBtn = document.getElementById('retry');
+
+function loadDash(){
+  status.textContent = 'Mengambil URL dashboard terbaru dari repo...';
+  status.className = 'status';
+  urlDiv.textContent = '';
+  retryBtn.style.display = 'none';
+  fetch(REPO_URL + '?t=' + Date.now(), {cache: 'no-store'})
+    .then(function(r){ if(!r.ok) throw new Error('HTTP '+r.status); return r.text(); })
+    .then(function(url){
+      url = url.trim();
+      if(!url.match(/^https?:\/\//)) throw new Error('invalid url: '+url);
+      urlDiv.textContent = url;
+      status.textContent = 'Membuka dashboard...';
+      setTimeout(function(){ location.replace(url); }, 600);
+    })
+    .catch(function(e){
+      status.textContent = 'Gagal mengambil URL: ' + e.message;
+      status.className = 'status err';
+      retryBtn.style.display = 'inline-block';
+      setTimeout(loadDash, 10000);
+    });
+}
+loadDash();
+</script>
+</body></html>
