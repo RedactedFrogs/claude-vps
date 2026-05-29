@@ -335,9 +335,14 @@ function safeReload(){{
           b.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#f44;color:#fff;padding:8px;text-align:center;font-family:monospace;z-index:99999';
           document.body.appendChild(b);
         }}
-        b.textContent = 'KONEKSI HILANG ('+(Math.floor((Date.now()-ptrLoadTime)/60000))+' min). Reload manual atau pull-to-refresh.';
-        // retry in 30s
-        setTimeout(safeReload, 30000);
+        var elapsed = Math.floor((Date.now()-ptrLoadTime)/60000);
+        b.textContent = 'KONEKSI HILANG ('+elapsed+' min). Redirect ke launcher dalam 5s...';
+        // after 2 retry failures (~60s), redirect to launcher
+        if(elapsed >= 2){{
+          setTimeout(function(){{ location.href = 'https://cdn.jsdelivr.net/gh/RedactedFrogs/claude-vps@main/dashboard-launcher.html'; }}, 5000);
+        }} else {{
+          setTimeout(safeReload, 30000);
+        }}
       }});
   }} catch(e){{ setTimeout(safeReload, 30000); }}
 }}
