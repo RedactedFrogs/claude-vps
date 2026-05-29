@@ -231,8 +231,8 @@ def generate():
     m_life    = ms.get("lifetime_accepted", 0)
     m_upd     = ms.get("updated_iso", "(belum)")
 
-    return f"""<!DOCTYPE html><html><head><meta http-equiv="refresh" content="30"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><meta charset="utf-8">
-<meta http-equiv="refresh" content="30"><title>AWP Dashboard</title><style>
+    return f"""<!DOCTYPE html><html><head><meta http-equiv="refresh" content="15"><meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate"><meta http-equiv="Pragma" content="no-cache"><meta http-equiv="Expires" content="0"><meta charset="utf-8">
+<meta http-equiv="refresh" content="15"><title>AWP Dashboard</title><style>
 *{{box-sizing:border-box}}
 body{{font-family:'Courier New',monospace;background:#0a0a0a;color:#ddd;padding:20px;max-width:1300px;margin:auto}}
 h1{{color:#4af;margin:0 0 4px}} .sub{{color:#888;font-size:13px;margin-bottom:18px}}
@@ -319,6 +319,30 @@ document.querySelectorAll('.api-down').forEach(function(el){{
 var since=parseInt(el.dataset.since||'0');
 if(since>0)el.textContent='mati '+fmtUp(now-since);}});}}
 setInterval(tickUp,1000);tickUp();
+// Robust auto-reload: every 60s, force reload (bypass cache + retry on fail)
+var ptrLoadTime = Date.now();
+function safeReload(){{
+  try{{
+    // Use fetch to test connection first
+    fetch(location.href, {{cache: 'no-store', method: 'HEAD'}})
+      .then(r => {{ if(r.ok) location.reload(true); else throw new Error('http '+r.status); }})
+      .catch(e => {{
+        // show error banner instead of blank
+        var b = document.getElementById('refresh-err');
+        if(!b){{
+          b = document.createElement('div');
+          b.id = 'refresh-err';
+          b.style.cssText = 'position:fixed;top:0;left:0;right:0;background:#f44;color:#fff;padding:8px;text-align:center;font-family:monospace;z-index:99999';
+          document.body.appendChild(b);
+        }}
+        b.textContent = 'KONEKSI HILANG ('+(Math.floor((Date.now()-ptrLoadTime)/60000))+' min). Reload manual atau pull-to-refresh.';
+        // retry in 30s
+        setTimeout(safeReload, 30000);
+      }});
+  }} catch(e){{ setTimeout(safeReload, 30000); }}
+}}
+// Reload every 60s
+setInterval(safeReload, 60000);
 // Pull-to-refresh: drag down at top of page > 80px = reload
 var ptrStartY=0, ptrDist=0, ptrIndicator=null;
 document.addEventListener('touchstart', function(e){{
