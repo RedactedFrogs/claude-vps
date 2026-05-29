@@ -5,8 +5,8 @@ LOG=/var/log/awp/pool-refresh.log
 POOL=/root/.awp-mining/article_pool_v2.jsonl
 USED=/root/.awp-mining/used_articles.txt
 LOCK=/root/.awp-mining/state/pool_refresh.lock
-THRESHOLD=4000      # trigger refresh when unconsumed < this
-FETCH_BATCH=8000    # how many new articles to fetch per refresh
+THRESHOLD=6000      # trigger refresh when unconsumed < this
+FETCH_BATCH=4000    # how many new articles to fetch per refresh
 
 p=$(wc -l < $POOL 2>/dev/null || echo 0)
 u=$(wc -l < $USED 2>/dev/null || echo 0)

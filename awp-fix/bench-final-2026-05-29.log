@@ -1,0 +1,9 @@
+2026-05-29T07:31:53Z === A_c8_g10 conc=8 gap=10 START ===
+2026-05-29T07:43:43Z A_c8_g10 RESULT: delta=146 rate=14.48/min load=165.58 mem=4059MB
+2026-05-29T07:43:43Z === B_c10_g15 conc=10 gap=15 START ===
+2026-05-29T07:56:04Z B_c10_g15 RESULT: delta=255 rate=25.98/min load=192.25 mem=4008MB
+2026-05-29T07:56:04Z === C_c10_g5 conc=10 gap=5 START ===
+2026-05-29T08:08:09Z C_c10_g5 RESULT: delta=147 rate=14.53/min load=173.14 mem=3753MB
+2026-05-29T08:08:09Z === D_c12_g15 conc=12 gap=15 START ===
+2026-05-29T08:19:51Z D_c12_g15 RESULT: delta=164 rate=17.17/min load=178.66 mem=3157MB
+=== BENCH FINAL DONE ===
