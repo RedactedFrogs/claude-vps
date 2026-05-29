@@ -62,7 +62,7 @@ POOL_FILE      = "/root/.awp-mining/article_pool.jsonl"
 POOL_FILE_V2   = "/root/.awp-mining/article_pool_v2.jsonl"   # official-crawler pool (richer)
 USED_FILE      = "/root/.awp-mining/used_articles.txt"
 WALLET_FILE    = "/root/.awp-mining/all-wallets-status.txt"
-PROGRESS       = "/var/cache/awp/miner-progress.json"
+PROGRESS       = os.environ.get("MINER_PROGRESS_FILE", "/var/cache/awp/miner-progress.json")
 LOG_FILE       = "/var/log/awp/miner-v4.log"
 API_HEALTH     = "https://api.minework.net/healthz"
 
@@ -444,7 +444,15 @@ def load_wallets():
         p = line.split()
         if p and p[0].startswith("wallet-"):
             ws.append(p[0])
-    return sorted(set(ws))
+    ws = sorted(set(ws))
+    # WALLET_RANGE env support: "0-125" or "126-250" for multi-process split
+    rng = os.environ.get("WALLET_RANGE")
+    if rng:
+        try:
+            a, b = (int(x) for x in rng.split("-"))
+            ws = [w for w in ws if a <= int(w.replace("wallet-","")) <= b]
+        except Exception: pass
+    return ws
 
 
 def run_round(wallets, rnd):
@@ -492,8 +500,8 @@ def main():
             _progress.update(api=state, api_ms=ms, state=f"api {state} ({ms}ms)")
         save_progress()
         log.info(f"watchdog: API {state} ({ms}ms)")
-        if state == "down":
-            log.info(f"API down — wait {API_RETRY}s, retry")
+        if state in ("down", "slow"):
+            log.info(f"API {state} — wait {API_RETRY}s, retry (skip mining when API unstable)")
             with _prog_lock:
                 _progress.update(state="waiting (API down)", pow_ok=False,
                                  api_green_since=0)
