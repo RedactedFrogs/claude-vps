@@ -166,7 +166,7 @@ def api_health():
         ms = int((time.time() - t) * 1000)
         if r.status_code != 200:
             return "down", ms
-        return ("fast" if ms < 3000 else "slow"), ms
+        return ("fast" if ms < 5000 else "slow"), ms
     except Exception:
         return "down", int((time.time() - t) * 1000)
 
