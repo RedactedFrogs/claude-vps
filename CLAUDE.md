@@ -3,7 +3,7 @@
 File ini dibaca otomatis setiap sesi baru. Owner: **Hermawan** (pemula, Bahasa Indonesia). Jawab singkat. Kerjakan sendiri via bridge VPS, jangan suruh user.
 
 ## BOOTSTRAP — WAJIB JALANKAN PERTAMA KALI
-Sebelum apapun, jalankan ini di bash agar fungsi `vps` aktif. URL bridge dibaca dari `bridge_url.txt` di repo (VPS auto-publish saat URL rotate, jadi selalu fresh — `git pull` dulu agar dapat versi terbaru):
+Sebelum apapun, jalankan ini di bash agar fungsi `vps` aktif. URL bridge dibaca dari `bridge_url.txt` di repo (VPS2 auto-publish tiap 2 menit saat URL rotate, jadi selalu fresh — `git pull` dulu agar dapat versi terbaru):
 
 ```bash
 git pull --quiet 2>/dev/null || true
@@ -32,64 +32,47 @@ sys.exit(resp.get("exit", 0))
 }
 export -f vps
 
-# verify bridge alive
+# verify bridge alive (harus keluar: BRIDGE_OK + srv1597200)
 vps "echo BRIDGE_OK && hostname"
 ```
 
-Setelah bootstrap, **semua command VPS = `vps "<command bash>"`**. Contoh:
-- `vps "systemctl is-active awp-miner zcashd"`
-- `vps "tail -50 /var/log/awp/miner-v4.log"`
-- `vps "zcash-cli -conf=/zcash/zcash.conf -datadir=/zcash/data getblockchaininfo"`
+Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai root di VPS2). Contoh:
+- `vps "systemctl is-active fomo-seller vps-bridge vps-tunnel"`
+- `vps "tail -30 /home/boss/fomo-bot/seller.log"`
 
 ## VPS — INFO
-- Host: `187.127.110.187` (Hostinger KVM 2). SSH port: bukan dari Cloud (firewall). Akses Cloud = via bridge HTTPS di atas.
-- Sumber-of-truth lengkap: `/root/PROJECT_STATE.md` di VPS — `vps "cat /root/PROJECT_STATE.md"` untuk detail terbaru.
+- **VPS AKTIF = VPS2** Hostinger, hostname `srv1597200`, IP Tailscale `100.103.6.98` (IP Tailscale TIDAK bisa dijangkau dari Cloud — akses Cloud HANYA via bridge di atas).
+- VPS Hostinger lama `187.127.110.187` (AWP miner 250 wallet + node Zcash) **SUDAH MATI sejak ~Juni 2026** — abaikan info lama soal itu.
+- User Linux `boss` yang menjalankan agent/bot; bridge jalan sebagai root.
 
-## DUA PROYEK (terisolasi)
+## SERVICES PENTING DI VPS2
+- **Jarvis / OpenClaw**: `openclaw-gateway.service` (systemd --user, user boss). Cek: `runuser -u boss -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user status openclaw-gateway`. Bot Telegram Jarvis = notifikasi ke owner.
+- **AWP validator** (wallet `0x9C98…`): di-spawn otomatis oleh gateway OpenClaw. **JANGAN restart gateway sembarangan** (validator ikut putus). Penjaga: `awp-validator-watcher.timer`, `awp-api-monitor.timer`.
+- **Fomoater auto-seller**: `fomo-seller.service` + `fomo-seller-watchdog.timer` — cek tiap 1 detik apakah Fomoater Pass (6 buah, soulbound) sudah bisa diperdagangkan; begitu bisa langsung terima offer OpenSea tertinggi **≥ $50**. **JANGAN dimatikan.** Log `/home/boss/fomo-bot/seller.log`, status `/home/boss/fomo-bot/seller_status.json`.
+- **Monitor pass**: `fomopass-monitor.timer` (notif Telegram).
+- **Bridge (akses HP)**: `vps-bridge.service` (Python :18790) + `vps-tunnel.service` (cloudflared quick tunnel) + `bridge-url-watchdog.timer` (publish URL ke repo ini).
+- Lihat semua: `vps "systemctl list-units --type=service --state=running --no-pager"`.
 
-### 1. AWP Mining (Agent Work Protocol)
-- 250 wallet, miner custom: `/root/.awp-mining/awp_miner_v4.py` (service: `awp-miner.service`)
-- Pool data: `/root/.awp-mining/article_pool_v2.jsonl` (4000 artikel, ~30 field/artikel)
-- Alur: heartbeat → PoW gate → POST `/api/mining/v1/submissions`
-- **BLOCKER:** endpoint PoW platform AWP (`api.minework.net`) sering down — miner auto-retry, nunggu platform pulih.
-- Dashboard: `http://187.127.110.187:8080` (login `awp` / `Clover168`)
-
-### 2. DePINZcash — Node Zcash
-- `zcashd` 6.12.3 PRUNED, service: `zcashd.service`
-- Datadir: `/zcash/data`, conf: `/zcash/zcash.conf`
-- Isolasi dari AWP: disk di loopback `/zcash-disk.img` (mount `/zcash`), CPUQuota=100% + Nice=15
-- Watchdog disk: `/usr/local/bin/zcash_disk_watchdog.sh` (cron 10 menit) auto-grow sampai 50GB
-- Dashboard: `http://187.127.110.187:8080/zcash_dashboard.html`
-- **STATUS:** sedang initial sync (~1-2 hari)
-- **SISA KERJAAN** setelah sync 100%:
-  1. Generate wallet Solana khusus $ZePIN (terpisah dari wallet AWP)
-  2. Expose RPC + TLS (mode exposed-RPC; lihat `/root/dz-audit/docs/EXPOSED_RPC.md`)
-  3. Register node ke DePINZcash, verifikasi proof "accepted"
-- **PENTING:** jangan bikin script node-PALSU. Pruned node ini sudah solusi sah.
-
-## SERVICES TAMBAHAN
-- Bridge: `vps-bridge.service` (Python di :18790) + `vps-tunnel.service` (cloudflared quick tunnel)
-- System AWP/Zcash: `awp-miner`, `awp-dashboard`, `awp-tunnel`, `awp-lt`, `zcashd`
-- User: `openclaw-gateway` (port 18789) — `systemctl --user ...`
-- Cek: `vps "systemctl is-active awp-miner zcashd awp-dashboard vps-bridge vps-tunnel"`
+## WALLET & KUNCI (JANGAN PERNAH tampilkan isinya ke chat)
+- Wallet utama `0xA10C742597B3639331903ed1c26208AF87fAcD95` → `/home/boss/.sniper_key`
+- Wallet validator `0x9C98Cc106b01C0B9dAEA980aa36a5d731587bDa8` → `/home/boss/.lobster_seed`
+- 80 wallet bot → `/home/boss/.pixelpals_wallets.json`
+- Seed Phantom → `/home/boss/.phantom_seed`
+- Operasi massal (sweep/konsolidasi) **HANYA 80 wallet bot**; utama & validator jangan disentuh kecuali user sebut eksplisit.
 
 ## LOGS
-- AWP miner: `/var/log/awp/miner-v4.log`
-- Zcash: `journalctl -u zcashd.service`
-- Bridge: `/var/log/awp/vps-bridge.log`
-- Tunnel: `/var/log/awp/vps-tunnel.log`
-- Disk watchdog: `/var/log/awp/zcash-disk.log`
-- Dashboard cron: `/var/log/awp/dashboard.log`
+- Bridge watchdog: `/var/log/bridge-watchdog.log`
+- Fomo seller: `/home/boss/fomo-bot/seller.log`, watchdog `/var/log/fomo_seller_watchdog.log`
+- Pass monitor: `/var/log/fomopass_monitor.log`
+- AWP validator watcher: `/var/log/awp_validator_watcher.log`
 
 ## ATURAN PENTING
-- **Jangan ganggu AWP.** Zcash sudah terisolasi (disk + CPU).
-- **OpenClaw enrichment LLM = berbayar (tembok billing)** — jangan aktifkan tanpa izin user.
-- **Jangan sebut wallet count ke Discord/external** (Sybil discretion).
-- Solusi harus **gratis** (user di Claude Max, tapi no extra cost untuk runtime/AI lain).
-- **Jawaban singkat** — user pemula, hindari paragraf panjang & opsi teknis tanpa terjemahan.
+- **Jawaban singkat** — user pemula, hindari paragraf panjang & opsi teknis tanpa terjemahan. Tampilkan waktu dalam **WIB**.
+- Solusi harus **gratis** (no extra cost untuk runtime/AI lain).
+- **Jangan sebut jumlah wallet ke Discord/external** (Sybil discretion).
+- Disk VPS2 pernah penuh 100% gara-gara log bot yang error-loop — bot baru WAJIB batasi ukuran log-nya.
 - Untuk edit file di VPS: jangan minta user copy-paste; pakai `vps "cat > /path/file <<'EOF' ... EOF"` atau base64 transfer.
 
 ## KALAU BRIDGE ERROR
-1. Re-run bootstrap untuk fetch URL terbaru (VPS watchdog cron 2-min mungkin belum sempat publish).
-2. Kalau masih error, cek `vps_url.txt` di repo `claude-vps` raw. Kalau URL nya outdated >5 menit, tunnel service mungkin down — minta user SSH ke laptop & jalankan `systemctl restart vps-tunnel`.
-3. Watchdog log: `/var/log/awp/bridge-watchdog.log` (lewat `vps "tail /var/log/awp/bridge-watchdog.log"`).
+1. Re-run bootstrap (`git pull` dulu) — watchdog VPS2 publish URL baru maks ~2 menit setelah tunnel rotate.
+2. Kalau masih error >5 menit: tunnel/bridge mungkin mati. Minta user buka Claude Code di laptop (terhubung Tailscale ke VPS2) untuk cek `systemctl status vps-bridge vps-tunnel` dan `tail /var/log/bridge-watchdog.log`.
