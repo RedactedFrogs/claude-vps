@@ -73,6 +73,23 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 - Disk VPS2 pernah penuh 100% gara-gara log bot yang error-loop — bot baru WAJIB batasi ukuran log-nya.
 - Untuk edit file di VPS: jangan minta user copy-paste; pakai `vps "cat > /path/file <<'EOF' ... EOF"` atau base64 transfer.
 
+## KALAU BRIDGE 401 (token HP belum terdaftar di VPS2)
+Minta **kode daftar** ke owner (owner minta ke Claude laptop; kode 8 huruf, sekali pakai, berlaku 1 jam). Lalu jalankan (ganti KODE), kemudian ulang `vps "echo BRIDGE_OK && hostname"`:
+
+```bash
+KODE="XXXX-XXXX"
+python3 -c '
+import os, sys, json, urllib.request
+req = urllib.request.Request(os.environ["VPS_BRIDGE_URL"] + "/enroll",
+    data=json.dumps({"code": sys.argv[1], "token": os.environ["VPS_BRIDGE_TOKEN"]}).encode(),
+    headers={"Content-Type": "application/json"}, method="POST")
+try:
+    print(urllib.request.urlopen(req, timeout=30).read().decode())
+except Exception as e:
+    print("ENROLL ERROR:", e, getattr(e, "read", lambda: b"")().decode())
+' "$KODE"
+```
+
 ## KALAU BRIDGE ERROR
 1. Re-run bootstrap (`git pull` dulu) — watchdog VPS2 publish URL baru maks ~2 menit setelah tunnel rotate.
 2. Kalau masih error >5 menit: tunnel/bridge mungkin mati. Minta user buka Claude Code di laptop (terhubung Tailscale ke VPS2) untuk cek `systemctl status vps-bridge vps-tunnel` dan `tail /var/log/bridge-watchdog.log`.
