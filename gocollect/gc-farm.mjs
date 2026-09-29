@@ -7,6 +7,7 @@
 //   node gc-farm.mjs --update-keys     # download bundle baru, extract HMAC keys
 //   node gc-farm.mjs                   # jalankan farm
 //   node gc-farm.mjs --wallet 0        # farm hanya wallet index 0
+//   node gc-farm.mjs --manual-captcha  # solve captcha manual via HP (gratis, tanpa 2captcha)
 //
 // Config: buat file .env di folder ini (lihat .env.example)
 
@@ -18,6 +19,7 @@ import https from "node:https";
 import http from "node:http";
 import { Wallet } from "ethers";
 import { SocksProxyAgent } from "socks-proxy-agent";
+import { spawn } from "node:child_process";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
@@ -57,6 +59,9 @@ const CFG = {
   userAgent: process.env.USER_AGENT || "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36",
   maxLogSize: parseInt(process.env.MAX_LOG_SIZE || "10485760"),
   walletDelay: parseInt(process.env.WALLET_DELAY || "5000"),
+  telegramToken: process.env.TELEGRAM_BOT_TOKEN || "",
+  telegramChatId: process.env.TELEGRAM_CHAT_ID || "",
+  captchaPort: parseInt(process.env.CAPTCHA_PORT || "18791"),
 };
 
 const GC_BASE = "https://gocollect.fun";
@@ -203,7 +208,9 @@ function extractKeysFromBundle(code) {
   const buildMatch = code.match(/"(1[789]\d{11,12})"/);
   const buildId = buildMatch ? buildMatch[1] : null;
 
-  const skMatch = code.match(/sitekey:\s*"(0x[A-Fa-f0-9]+)"/);
+  const skMatch = code.match(/sitekey:\s*"(0x[A-Fa-f0-9]{16,})"/)
+    || code.match(/siteKey:\s*"(0x[A-Fa-f0-9]{16,})"/)
+    || code.match(/"(0x4AAAAAAA[A-Fa-f0-9]{14,})"/);
   const sitekey = skMatch ? skMatch[1] : null;
 
   return { j3, k3, buildId, sitekey };
@@ -250,7 +257,8 @@ async function captchaBalance() {
 }
 
 async function solveTurnstile(action, cData) {
-  if (!CFG.captchaKey) throw new Error("CAPTCHA_API_KEY belum diset");
+  if (manualSolver) return manualSolver.solve(action, cData);
+  if (!CFG.captchaKey) throw new Error("CAPTCHA_API_KEY belum diset (pakai --manual-captcha untuk solve manual)");
 
   const keys = loadKeys();
   const sitekey = keys?.sitekey || CFG.sitekey;
@@ -307,6 +315,147 @@ async function solveTurnstile(action, cData) {
   }
 
   throw new Error("2captcha timeout (120s)");
+}
+
+// ======================== MANUAL CAPTCHA SOLVER ========================
+
+let manualSolver = null;
+
+class ManualCaptchaSolver {
+  constructor() {
+    this.port = CFG.captchaPort;
+    this.server = null;
+    this.tunnelUrl = null;
+    this.pending = null;
+  }
+
+  async start() {
+    this.server = http.createServer((req, res) => this._handle(req, res));
+    this.server.listen(this.port);
+    log(`Captcha server di port ${this.port}`);
+    await this._startTunnel();
+    if (this.tunnelUrl) {
+      log(`Captcha URL publik: ${this.tunnelUrl}`);
+      await this._sendTelegram(`Bot GoCollect dimulai (manual captcha).\nNanti kamu akan dapat link captcha di sini.`);
+    }
+  }
+
+  async _startTunnel() {
+    return new Promise((resolve) => {
+      try {
+        const cf = spawn("cloudflared", ["tunnel", "--url", `http://localhost:${this.port}`], {
+          stdio: ["ignore", "pipe", "pipe"],
+        });
+        const onData = (data) => {
+          const m = data.toString().match(/(https:\/\/[a-z0-9-]+\.trycloudflare\.com)/);
+          if (m && !this.tunnelUrl) { this.tunnelUrl = m[1]; resolve(); }
+        };
+        cf.stdout.on("data", onData);
+        cf.stderr.on("data", onData);
+        cf.on("error", () => { this.tunnelUrl = null; resolve(); });
+        setTimeout(() => { if (!this.tunnelUrl) resolve(); }, 20000);
+      } catch { resolve(); }
+    });
+  }
+
+  _handle(req, res) {
+    const url = new URL(req.url, `http://localhost:${this.port}`);
+    if (req.method === "GET" && url.pathname === "/solve") {
+      const action = url.searchParams.get("action") || "";
+      const cdata = url.searchParams.get("cdata") || "";
+      const keys = loadKeys();
+      const sk = keys?.sitekey || CFG.sitekey;
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end(this._html(sk, action, cdata));
+    } else if (req.method === "POST" && url.pathname === "/submit") {
+      let body = "";
+      req.on("data", (c) => (body += c));
+      req.on("end", () => {
+        try {
+          const { token } = JSON.parse(body);
+          if (this.pending && token) {
+            this.pending(token);
+            this.pending = null;
+            res.writeHead(200, { "Content-Type": "application/json" });
+            res.end('{"ok":true}');
+          } else {
+            res.writeHead(400, { "Content-Type": "application/json" });
+            res.end('{"ok":false}');
+          }
+        } catch {
+          res.writeHead(400);
+          res.end("err");
+        }
+      });
+    } else {
+      res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+      res.end("<h3>GoCollect Captcha Server aktif. Tunggu link dari Telegram.</h3>");
+    }
+  }
+
+  async solve(action, cData) {
+    const base = this.tunnelUrl || `http://localhost:${this.port}`;
+    const solveUrl = `${base}/solve?action=${encodeURIComponent(action)}&cdata=${encodeURIComponent(cData || "")}`;
+    log(`CAPTCHA DIBUTUHKAN — buka link ini:`);
+    log(solveUrl);
+    await this._sendTelegram(`Captcha dibutuhkan!\n\nAction: ${action}\nBuka link:\n${solveUrl}\n\nTimeout 5 menit.`);
+    return new Promise((resolve, reject) => {
+      this.pending = resolve;
+      setTimeout(() => {
+        if (this.pending) {
+          this.pending = null;
+          reject(new Error("Captcha timeout 5 menit — tidak ada yang solve"));
+        }
+      }, 300000);
+    });
+  }
+
+  async _sendTelegram(text) {
+    if (!CFG.telegramToken || !CFG.telegramChatId) return;
+    try {
+      await gcFetch(`https://api.telegram.org/bot${CFG.telegramToken}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ chat_id: CFG.telegramChatId, text }),
+      });
+    } catch (e) {
+      logErr(`Telegram gagal: ${e.message}`);
+    }
+  }
+
+  _html(sitekey, action, cdata) {
+    return `<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GoCollect Captcha</title>
+<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
+<style>
+body{font-family:sans-serif;text-align:center;padding:40px 16px;background:#111827;color:#e5e7eb}
+h2{color:#34d399;margin-bottom:8px}
+.info{color:#9ca3af;font-size:14px;margin-bottom:24px}
+#w{display:flex;justify-content:center;margin:24px 0}
+#st{padding:16px;border-radius:8px;margin-top:20px;font-size:15px}
+.wait{background:#1f2937}.ok{background:#064e3b;color:#6ee7b7}.err{background:#7f1d1d;color:#fca5a5}
+</style></head><body>
+<h2>Solve Captcha</h2>
+<p class="info">Action: ${action}</p>
+<div id="w">
+<div class="cf-turnstile" data-sitekey="${sitekey}" data-action="${action}"${cdata ? ` data-cdata="${cdata}"` : ""} data-callback="ok" data-theme="dark"></div>
+</div>
+<div id="st" class="wait">Selesaikan captcha di atas...</div>
+<script>
+function ok(t){
+document.getElementById("st").className="wait";
+document.getElementById("st").textContent="Mengirim...";
+fetch("/submit",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({token:t})})
+.then(r=>r.json()).then(d=>{
+var s=document.getElementById("st");
+if(d.ok){s.className="ok";s.textContent="Token terkirim! Tutup halaman ini."}
+else{s.className="err";s.textContent="Error — mungkin sudah expired, refresh halaman."}
+}).catch(e=>{document.getElementById("st").className="err";document.getElementById("st").textContent="Network error"});
+}
+</script></body></html>`;
+  }
 }
 
 // ======================== GOCOLLECT API CLIENT ========================
@@ -622,6 +771,12 @@ async function main() {
   if (args.includes("--update-keys")) {
     await updateKeys();
     return;
+  }
+
+  if (args.includes("--manual-captcha")) {
+    manualSolver = new ManualCaptchaSolver();
+    await manualSolver.start();
+    log("Mode: MANUAL CAPTCHA — link solve dikirim via Telegram");
   }
 
   log("=== GoCollect Farm Start ===");
