@@ -1,0 +1,14 @@
+{
+  "name": "gc-farm",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "farm": "node gc-farm.mjs",
+    "diagnose": "node gc-farm.mjs --diagnose",
+    "update-keys": "node gc-farm.mjs --update-keys"
+  },
+  "dependencies": {
+    "ethers": "^6.13.0",
+    "socks-proxy-agent": "^8.0.0"
+  }
+}
