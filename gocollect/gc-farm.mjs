@@ -194,13 +194,13 @@ async function downloadBundle() {
 }
 
 function extractKeysFromBundle(code) {
-  const keyMatch = code.match(/const\s+j3="([^"]+)",\s*k3="([^"]+)"/);
-  if (!keyMatch) throw new Error('Pattern j3/k3 tidak ditemukan di bundle');
+  const keyMatch = code.match(/const\s+\w{1,3}="([A-Za-z0-9+/=]{30,60})",\s*\w{1,3}="([A-Za-z0-9+/=]{30,60})"/);
+  if (!keyMatch) throw new Error('Pattern HMAC keys tidak ditemukan di bundle');
 
   const j3 = keyMatch[1];
   const k3 = keyMatch[2];
 
-  const buildMatch = code.match(/x2\s*=\s*"(\d+)"/);
+  const buildMatch = code.match(/"(1[789]\d{11,12})"/);
   const buildId = buildMatch ? buildMatch[1] : null;
 
   const skMatch = code.match(/sitekey:\s*"(0x[A-Fa-f0-9]+)"/);
