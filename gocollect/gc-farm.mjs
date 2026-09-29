@@ -273,7 +273,6 @@ async function solveTurnstile(action, cData) {
     if (CFG.captchaProxyPass) params.set("proxypassword", CFG.captchaProxyPass);
   }
 
-  // cData di-BAKE ke token via param "data" (BUKAN "cdata"!) — §2
   if (cData) params.set("data", cData);
 
   log(`Solve turnstile action=${action} cData=${cData ? "yes" : "no"}...`);
@@ -442,7 +441,6 @@ class GCClient {
   async openCrate(crateId) {
     log(`Open crate ${crateId}...`);
 
-    // §5: pre-mint token SEBELUM fresh fix
     const cData = computeOpenCdata(this.bearer);
 
     log("Pre-mint turnstile token untuk open...");
@@ -693,7 +691,7 @@ async function main() {
     }
   }
 
-  log(`=== Farm selesai: ${totalOpened} total crate opened ===");
+  log(`=== Farm selesai: ${totalOpened} total crate opened ===`);
 }
 
 main().catch((e) => {
