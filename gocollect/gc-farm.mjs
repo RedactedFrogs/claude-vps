@@ -968,7 +968,7 @@ async function main() {
     log("Mode: MANUAL CAPTCHA");
   }
 
-  log(`=== GoCollect Farm ${isDryRun ? "DRY RUN" : "LIVE"} ===");
+  log(`=== GoCollect Farm ${isDryRun ? "DRY RUN" : "LIVE"} ===`);
 
   let keys = loadKeys();
   if (!keys) {
@@ -1077,7 +1077,7 @@ async function main() {
       }
     }
 
-    log(`=== Cycle done: ${totalOpened} opened, ${totalWins} wins ===");
+    log(`=== Cycle done: ${totalOpened} opened, ${totalWins} wins ===`);
 
     const report = stats.getDailyReport();
     await sendTelegram(
