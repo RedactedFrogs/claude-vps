@@ -280,7 +280,10 @@ async function captchaBalance() {
   return res.json();
 }
 
+let noCaptchaMode = false;
+
 async function solveTurnstile(action, cData) {
+  if (noCaptchaMode) { log(`[no-captcha] Skip turnstile action=${action}`); return ""; }
   if (manualSolver) return manualSolver.solve(action, cData);
   if (!CFG.captchaKey)
     throw new Error("CAPTCHA_API_KEY belum diset (pakai --manual-captcha untuk solve manual)");
@@ -962,7 +965,10 @@ async function main() {
     return;
   }
 
-  if (args.includes("--manual-captcha")) {
+  if (args.includes("--no-captcha")) {
+    noCaptchaMode = true;
+    log("Mode: NO CAPTCHA (test tanpa Turnstile)");
+  } else if (args.includes("--manual-captcha")) {
     manualSolver = new ManualCaptchaSolver();
     await manualSolver.start();
     log("Mode: MANUAL CAPTCHA");
