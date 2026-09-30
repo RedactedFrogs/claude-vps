@@ -281,12 +281,32 @@ async function captchaBalance() {
 }
 
 let noCaptchaMode = false;
+let browserCaptchaMode = false;
+
+async function solveTurnstileBrowser(action, cData) {
+  const keys = loadKeys();
+  const sitekey = keys?.sitekey || CFG.sitekey;
+  if (!sitekey) throw new Error("Sitekey belum ada — jalankan --update-keys");
+  log(`[browser] Solve turnstile action=${action}...`);
+
+  const { execFileSync } = await import("node:child_process");
+  const solverPath = resolve(__dirname, "gc-captcha-solver.mjs");
+  const args = [solverPath, sitekey, action];
+  if (cData) args.push(cData);
+
+  const result = execFileSync("node", args, { timeout: 60000, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+  const token = result.trim();
+  if (!token) throw new Error("Browser solver returned empty token");
+  log(`[browser] Token solved (${token.length} chars)`);
+  return token;
+}
 
 async function solveTurnstile(action, cData) {
   if (noCaptchaMode) { log(`[no-captcha] Skip turnstile action=${action}`); return ""; }
+  if (browserCaptchaMode) return solveTurnstileBrowser(action, cData);
   if (manualSolver) return manualSolver.solve(action, cData);
   if (!CFG.captchaKey)
-    throw new Error("CAPTCHA_API_KEY belum diset (pakai --manual-captcha untuk solve manual)");
+    throw new Error("CAPTCHA_API_KEY belum diset (pakai --browser-captcha atau --manual-captcha)");
 
   const keys = loadKeys();
   const sitekey = keys?.sitekey || CFG.sitekey;
@@ -968,6 +988,9 @@ async function main() {
   if (args.includes("--no-captcha")) {
     noCaptchaMode = true;
     log("Mode: NO CAPTCHA (test tanpa Turnstile)");
+  } else if (args.includes("--browser-captcha")) {
+    browserCaptchaMode = true;
+    log("Mode: BROWSER CAPTCHA (headless Chrome)");
   } else if (args.includes("--manual-captcha")) {
     manualSolver = new ManualCaptchaSolver();
     await manualSolver.start();
