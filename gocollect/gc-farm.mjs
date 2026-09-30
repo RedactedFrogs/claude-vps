@@ -284,17 +284,14 @@ let noCaptchaMode = false;
 let browserCaptchaMode = false;
 
 async function solveTurnstileBrowser(action, cData) {
-  const keys = loadKeys();
-  const sitekey = keys?.sitekey || CFG.sitekey;
-  if (!sitekey) throw new Error("Sitekey belum ada — jalankan --update-keys");
   log(`[browser] Solve turnstile action=${action}...`);
 
   const { execFileSync } = await import("node:child_process");
   const solverPath = resolve(__dirname, "gc-captcha-solver.mjs");
-  const args = [solverPath, sitekey, action];
+  const args = [solverPath, action];
   if (cData) args.push(cData);
 
-  const result = execFileSync("node", args, { timeout: 60000, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
+  const result = execFileSync("node", args, { timeout: 120000, encoding: "utf-8", stdio: ["ignore", "pipe", "pipe"] });
   const token = result.trim();
   if (!token) throw new Error("Browser solver returned empty token");
   log(`[browser] Token solved (${token.length} chars)`);

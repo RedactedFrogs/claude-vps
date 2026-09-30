@@ -1,39 +1,95 @@
 #!/usr/bin/env node
-// Turnstile captcha solver v5 — stealth + human behavior simulation
+// gc-captcha-solver v6 — exact replica of gocollect.fun's Turnstile flow
+// Based on reverse-engineering index-TJhw5QIF.js function Cv()
 import puppeteerExtra from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 
 puppeteerExtra.use(StealthPlugin());
 
 const CHROME_PATH = "/usr/bin/google-chrome";
+const SITEKEY = "0x4AAAAAAFFEEqjfwjZSKSA0";
+const TS_URL = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+const SOLVE_TIMEOUT = 15000; // 15s, same as app (fS=15e3)
 
-function rand(min, max) { return min + Math.random() * (max - min); }
+function rand(a, b) { return a + Math.random() * (b - a); }
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
-async function humanMouseMove(page, steps = 5) {
+async function humanMouse(page, n = 5) {
   const vp = page.viewport();
   let x = rand(100, vp.width - 100), y = rand(100, vp.height - 100);
-  for (let i = 0; i < steps; i++) {
-    x += rand(-80, 80);
-    y += rand(-60, 60);
-    x = Math.max(10, Math.min(vp.width - 10, x));
-    y = Math.max(10, Math.min(vp.height - 10, y));
+  for (let i = 0; i < n; i++) {
+    x = Math.max(10, Math.min(vp.width - 10, x + rand(-80, 80)));
+    y = Math.max(10, Math.min(vp.height - 10, y + rand(-60, 60)));
     await page.mouse.move(x, y, { steps: Math.floor(rand(3, 8)) });
-    await sleep(rand(50, 200));
+    await sleep(rand(40, 150));
   }
 }
 
-async function humanScroll(page) {
-  await page.evaluate(() => {
-    window.scrollBy(0, Math.floor(Math.random() * 200 + 50));
-  });
-  await sleep(rand(300, 800));
-  await page.evaluate(() => {
-    window.scrollBy(0, -Math.floor(Math.random() * 100 + 30));
-  });
+// Single solve attempt — replicates Cv(action, cData) from the bundle
+async function solveSingle(page, action, cdata) {
+  return page.evaluate(async (sk, tsUrl, act, cd, timeout) => {
+    // Load turnstile if not present (same as Fw())
+    if (!window.turnstile) {
+      await new Promise((res, rej) => {
+        const s = document.createElement("script");
+        s.src = tsUrl;
+        s.async = true;
+        s.onload = () => {
+          if (window.turnstile) res(); else rej(new Error("no-turnstile"));
+        };
+        s.onerror = () => rej(new Error("load-failed"));
+        document.head.appendChild(s);
+      });
+    }
+
+    // Create container — exact same style as app
+    const el = document.createElement("div");
+    el.style.cssText = "position:fixed;left:50%;bottom:16px;transform:translateX(-50%);z-index:2147483647";
+    document.body.appendChild(el);
+
+    let wid;
+    try {
+      return await new Promise(resolve => {
+        const to = setTimeout(() => resolve({ error: "timeout" }), timeout);
+        const done = r => { clearTimeout(to); resolve(r); };
+
+        // Render with EXACT same params as app's Cv()
+        wid = window.turnstile.render(el, {
+          sitekey: sk,
+          ...(cd ? { cData: cd } : {}),
+          action: act,
+          appearance: "interaction-only",
+          execution: "execute",
+          callback: t => done({ token: t }),
+          "error-callback": e => (done({ error: "error:" + String(e ?? "").slice(0, 40) }), true),
+          "timeout-callback": () => done({ error: "timeout" }),
+          "unsupported-callback": () => done({ error: "unsupported" }),
+        });
+
+        // CRITICAL: must call execute() — this starts the challenge!
+        window.turnstile.execute(wid);
+      });
+    } catch (e) {
+      return { error: "exception:" + String(e?.name ?? e?.message ?? "").slice(0, 40) };
+    } finally {
+      try { if (wid !== undefined) window.turnstile.remove(wid); } catch {}
+      el.remove();
+    }
+  }, SITEKEY, TS_URL, action, cdata || "", SOLVE_TIMEOUT);
 }
 
-async function solve(sitekey, action, cdata) {
+// Double attempt with retry — replicates Uw(action, cData)
+async function solveWithRetry(page, action, cdata) {
+  const first = await solveSingle(page, action, cdata);
+  if (first.token || first.error === "off" || first.error === "unsupported") return first;
+  console.error(`[solver] Attempt 1 failed: ${first.error}, retrying...`);
+  await sleep(rand(500, 1500));
+  const second = await solveSingle(page, action, cdata);
+  if (second.token) return second;
+  return { error: `${first.error}+${second.error}`.slice(0, 60) };
+}
+
+async function solve(action, cdata) {
   const useXvfb = !process.env.DISPLAY;
   let xvfbProc;
   const display = `:${90 + Math.floor(Math.random() * 10)}`;
@@ -65,183 +121,54 @@ async function solve(sitekey, action, cdata) {
 
   try {
     const page = (await browser.pages())[0] || await browser.newPage();
-
     await page.setUserAgent(
       "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.6613.127 Safari/537.36"
     );
     await page.setViewport({ width: 1280, height: 720 });
 
-    // Token capture setup
-    let resolveToken, rejectToken;
-    const tokenPromise = new Promise((res, rej) => {
-      resolveToken = res;
-      rejectToken = rej;
-    });
-    const timeout = setTimeout(() => rejectToken(new Error("solve timeout 90s")), 90000);
-
-    // Expose callback for token capture
-    await page.exposeFunction("__solverGotToken", (t) => {
-      clearTimeout(timeout);
-      resolveToken(t);
-    });
-
-    // Hook turnstile.render to capture token via callback
-    await page.evaluateOnNewDocument(() => {
-      let hooked = false;
-      const hookTurnstile = () => {
-        if (hooked || !window.turnstile) return;
-        hooked = true;
-        const origRender = window.turnstile.render.bind(window.turnstile);
-        window.turnstile.render = function(container, opts) {
-          const origCb = opts.callback;
-          opts.callback = (token) => {
-            window.__solverGotToken(token);
-            if (origCb) origCb(token);
-          };
-          return origRender(container, opts);
-        };
-      };
-      const iv = setInterval(() => {
-        hookTurnstile();
-        if (hooked) clearInterval(iv);
-      }, 50);
-      setTimeout(() => clearInterval(iv), 30000);
-    });
-
-    // Navigate to page
-    console.error("[solver] Navigating...");
+    // Navigate to gocollect.fun — let CF challenge platform iframe run
+    console.error("[solver] Navigating to gocollect.fun...");
     await page.goto("https://gocollect.fun", {
       waitUntil: "domcontentloaded",
       timeout: 30000,
     });
 
-    // Simulate human-like behavior before Turnstile renders
-    console.error("[solver] Simulating human behavior...");
-    await sleep(rand(1000, 2000));
-    await humanMouseMove(page, 8);
-    await sleep(rand(500, 1000));
-    await humanScroll(page);
-    await sleep(rand(500, 1500));
-    await humanMouseMove(page, 5);
-    await sleep(rand(1000, 2000));
-
-    // Wait for page to fully load
+    // Wait for page to fully load (CF challenge platform runs in hidden iframe)
     await page.waitForFunction(() => document.readyState === "complete", { timeout: 15000 }).catch(() => {});
-    await sleep(rand(500, 1000));
 
-    // Check if turnstile is already loaded by the page
-    const hasTurnstile = await page.evaluate(() => !!window.turnstile);
-    console.error(`[solver] Turnstile present: ${hasTurnstile}`);
+    // Human-like behavior while CF challenge platform processes
+    console.error("[solver] Waiting for CF challenge + human sim...");
+    await sleep(rand(2000, 3000));
+    await humanMouse(page, 8);
+    await sleep(rand(1000, 2000));
+    await humanMouse(page, 5);
+    await sleep(rand(1000, 2000));
 
-    if (!hasTurnstile) {
-      // Load turnstile manually
-      console.error("[solver] Loading Turnstile script...");
-      await page.evaluate(() => {
-        return new Promise((resolve, reject) => {
-          const s = document.createElement("script");
-          s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-          s.onload = () => {
-            const t = setInterval(() => {
-              if (window.turnstile) { clearInterval(t); resolve(); }
-            }, 100);
-            setTimeout(() => { clearInterval(t); reject(new Error("ts init timeout")); }, 20000);
-          };
-          s.onerror = () => reject(new Error("ts load fail"));
-          document.head.appendChild(s);
-        });
-      });
+    // Now solve Turnstile using exact same flow as the app
+    console.error("[solver] Solving Turnstile (attempt 1+2)...");
+    const result = await solveWithRetry(page, action, cdata);
+
+    if (result.token) {
+      console.error("[solver] Success!");
+      return result.token;
     }
-
-    // More human behavior before rendering widget
-    await humanMouseMove(page, 4);
-    await sleep(rand(500, 1000));
-
-    // Render Turnstile widget
-    console.error("[solver] Rendering Turnstile widget...");
-    await page.evaluate((sk, act, cd) => {
-      const container = document.createElement("div");
-      container.id = "cf-solver";
-      container.style.cssText = "position:fixed;bottom:10px;left:10px;z-index:99999;background:#fff;padding:5px;border-radius:4px";
-      document.body.appendChild(container);
-
-      window.turnstile.render("#cf-solver", {
-        sitekey: sk,
-        action: act,
-        cData: cd || undefined,
-        theme: "light",
-        size: "normal",
-        retry: "auto",
-        "retry-interval": 5000,
-        callback: (t) => window.__solverGotToken(t),
-        "error-callback": (e) => console.error("TS error:", e),
-        "timeout-callback": () => console.error("TS timeout"),
-      });
-    }, sitekey, action, cdata || "");
-
-    // Simulate more human activity while waiting
-    console.error("[solver] Widget rendered, simulating activity while waiting...");
-
-    // Background human simulation loop
-    const humanLoop = (async () => {
-      for (let i = 0; i < 15; i++) {
-        await sleep(rand(2000, 4000));
-        await humanMouseMove(page, rand(2, 5));
-        if (Math.random() > 0.5) await humanScroll(page);
-      }
-    })();
-
-    // Try to click Turnstile iframe checkbox if visible
-    sleep(3000).then(async () => {
-      try {
-        const iframes = await page.$$('iframe[src*="challenges.cloudflare.com"]');
-        for (const iframe of iframes) {
-          const frame = await iframe.contentFrame();
-          if (!frame) continue;
-          try {
-            const el = await frame.waitForSelector(
-              'input[type="checkbox"], .cb-i, #challenge-stage, [role="checkbox"]',
-              { timeout: 3000 }
-            );
-            if (el) {
-              await sleep(rand(300, 800));
-              const box = await el.boundingBox();
-              if (box) {
-                await page.mouse.move(
-                  box.x + box.width / 2 + rand(-3, 3),
-                  box.y + box.height / 2 + rand(-3, 3),
-                  { steps: Math.floor(rand(5, 12)) }
-                );
-                await sleep(rand(100, 300));
-                await page.mouse.click(
-                  box.x + box.width / 2 + rand(-2, 2),
-                  box.y + box.height / 2 + rand(-2, 2)
-                );
-                console.error("[solver] Clicked Turnstile element");
-              }
-            }
-          } catch { /* managed mode, no clickable element */ }
-        }
-      } catch { /* no iframe */ }
-    });
-
-    console.error("[solver] Waiting for token...");
-    const token = await tokenPromise;
-    console.error("[solver] Got token!");
-    return token;
+    throw new Error(result.error || "unknown");
   } finally {
     await browser.close();
     if (xvfbProc) { xvfbProc.kill(); }
   }
 }
 
-const [sitekey, action, cdata] = process.argv.slice(2);
-if (!sitekey || !action) {
-  console.error("Usage: node gc-captcha-solver.mjs <sitekey> <action> [cdata]");
+const [, , action, cdata] = process.argv;
+if (!action) {
+  console.error("Usage: node gc-captcha-solver.mjs <action> [cdata]");
+  console.error("  action: signin | open");
+  console.error("  cdata:  nonce (for signin) or sha256-prefix (for open)");
   process.exit(1);
 }
 
 try {
-  const token = await solve(sitekey, action, cdata);
+  const token = await solve(action, cdata);
   process.stdout.write(token);
 } catch (e) {
   console.error("SOLVER_ERROR: " + e.message);
