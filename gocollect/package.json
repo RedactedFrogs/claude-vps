@@ -1,13 +1,21 @@
 {
   "name": "gc-farm",
-  "version": "1.0.0",
+  "version": "2.0.0",
   "type": "module",
   "scripts": {
-    "farm": "node gc-farm.mjs",
+    "update-keys": "node gc-farm.mjs --update-keys",
     "diagnose": "node gc-farm.mjs --diagnose",
-    "update-keys": "node gc-farm.mjs --update-keys"
+    "dry-run": "node gc-farm.mjs --dry-run --wallet 0",
+    "live-test": "node gc-farm.mjs --live --manual-captcha --wallet 0",
+    "live-all": "node gc-farm.mjs --live --manual-captcha",
+    "live-loop": "node gc-farm.mjs --live --loop --manual-captcha",
+    "dashboard": "node gc-dashboard.mjs",
+    "sweep-check": "node gc-sweep.mjs --check",
+    "sweep-nft": "node gc-sweep.mjs --sweep-nft",
+    "sweep-sol": "node gc-sweep.mjs --sweep-sol"
   },
   "dependencies": {
+    "@solana/spl-token": "^0.4.0",
     "@solana/web3.js": "^1.95.0",
     "bip39": "^3.1.0",
     "bs58": "^6.0.0",
