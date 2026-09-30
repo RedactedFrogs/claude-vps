@@ -1,18 +1,20 @@
 #!/usr/bin/env node
-// GoCollect Farm — implementasi lengkap dari Troubleshooting Guide 28 Sep 2026
-// Semua fix: HMAC key rotation, cData bake, 2captcha passthrough, pre-mint, dsb.
+// GoCollect Farm v2 — full auto-play with movement simulation, multi-proxy, anti-ban
 //
 // Usage:
-//   node gc-farm.mjs --diagnose        # cek saldo 2captcha, bundle, koneksi
-//   node gc-farm.mjs --update-keys     # download bundle baru, extract HMAC keys
-//   node gc-farm.mjs                   # jalankan farm
-//   node gc-farm.mjs --wallet 0        # farm hanya wallet index 0
-//   node gc-farm.mjs --manual-captcha  # solve captcha manual via HP (gratis, tanpa 2captcha)
+//   node gc-farm.mjs --update-keys          # download bundle, extract HMAC keys + sitekey
+//   node gc-farm.mjs --diagnose             # cek config, bundle, koneksi
+//   node gc-farm.mjs --dry-run              # login + getCrates + walk sim, TANPA open crate
+//   node gc-farm.mjs --dry-run --wallet 0   # dry run 1 wallet saja
+//   node gc-farm.mjs --live --wallet 0      # live 1 wallet (test dulu sebelum scale)
+//   node gc-farm.mjs --live                 # live semua wallet
+//   node gc-farm.mjs --live --loop          # live + ulangi terus (daily loop)
+//   node gc-farm.mjs --manual-captcha --live --wallet 0  # live + manual captcha
 //
 // Config: buat file .env di folder ini (lihat .env.example)
 
-import { createHmac, createHash } from "node:crypto";
-import { readFileSync, writeFileSync, existsSync, statSync, appendFileSync } from "node:fs";
+import { createHmac, createHash, randomBytes } from "node:crypto";
+import { readFileSync, writeFileSync, existsSync, statSync, appendFileSync, mkdirSync } from "node:fs";
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import https from "node:https";
@@ -35,8 +37,7 @@ function loadEnv() {
     console.error("ERROR: .env tidak ditemukan. Copy .env.example -> .env dan isi config.");
     process.exit(1);
   }
-  const lines = readFileSync(envPath, "utf-8").split("\n");
-  for (const line of lines) {
+  for (const line of readFileSync(envPath, "utf-8").split("\n")) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
     const eq = trimmed.indexOf("=");
@@ -53,6 +54,7 @@ const CFG = {
   captchaKey: process.env.CAPTCHA_API_KEY || "",
   sitekey: process.env.GC_SITEKEY || "",
   proxyUrl: process.env.PROXY_URL || "",
+  proxyListFile: process.env.PROXY_LIST_FILE || "",
   captchaProxy: process.env.CAPTCHA_PROXY || "",
   captchaProxyLogin: process.env.CAPTCHA_PROXY_LOGIN || "",
   captchaProxyPass: process.env.CAPTCHA_PROXY_PASS || "",
@@ -62,16 +64,23 @@ const CFG = {
   defaultLng: parseFloat(process.env.DEFAULT_LNG || "106.8456"),
   userAgent: process.env.USER_AGENT || "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Mobile Safari/537.36",
   maxLogSize: parseInt(process.env.MAX_LOG_SIZE || "10485760"),
-  walletDelay: parseInt(process.env.WALLET_DELAY || "5000"),
+  walletDelay: parseInt(process.env.WALLET_DELAY || "15000"),
   telegramToken: process.env.TELEGRAM_BOT_TOKEN || "",
   telegramChatId: process.env.TELEGRAM_CHAT_ID || "",
   captchaPort: parseInt(process.env.CAPTCHA_PORT || "18791"),
+  dashboardPort: parseInt(process.env.DASHBOARD_PORT || "18792"),
+  cratesPerSession: parseInt(process.env.CRATES_PER_SESSION || "8"),
+  breakMinMinutes: parseFloat(process.env.BREAK_MIN_MINUTES || "3"),
+  breakMaxMinutes: parseFloat(process.env.BREAK_MAX_MINUTES || "7"),
+  loopHours: parseFloat(process.env.LOOP_HOURS || "6"),
 };
 
 const GC_BASE = "https://gocollect.fun";
 const GC_API = "https://gocollect.fun";
 const KEYS_FILE = resolve(__dirname, "gc-keys.json");
 const LOG_FILE = resolve(__dirname, "gc-farm.log");
+const STATS_FILE = resolve(__dirname, "gc-stats.json");
+const STATE_FILE = resolve(__dirname, "gc-state.json");
 
 // ======================== LOGGING ========================
 
@@ -88,21 +97,41 @@ function log(msg) {
   } catch {}
 }
 
-function logErr(msg) {
-  log("ERROR: " + msg);
+function logErr(msg) { log("ERROR: " + msg); }
+
+// ======================== TELEGRAM ========================
+
+async function sendTelegram(text) {
+  if (!CFG.telegramToken || !CFG.telegramChatId) return;
+  try {
+    await gcFetch(`https://api.telegram.org/bot${CFG.telegramToken}/sendMessage`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ chat_id: CFG.telegramChatId, text, parse_mode: "HTML" }),
+    });
+  } catch (e) { logErr(`Telegram gagal: ${e.message}`); }
 }
 
 // ======================== HTTP HELPER ========================
 
-function makeAgent() {
-  if (!CFG.proxyUrl) return undefined;
-  if (CFG.proxyUrl.startsWith("socks")) {
-    return new SocksProxyAgent(CFG.proxyUrl);
-  }
+function makeProxyAgent(proxyUrl) {
+  if (!proxyUrl) return undefined;
+  if (proxyUrl.startsWith("socks")) return new SocksProxyAgent(proxyUrl);
   return undefined;
 }
 
-const proxyAgent = makeAgent();
+function loadProxyList() {
+  if (!CFG.proxyListFile) return [];
+  const file = resolve(__dirname, CFG.proxyListFile);
+  if (!existsSync(file)) return [];
+  return readFileSync(file, "utf-8")
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => l && !l.startsWith("#"));
+}
+
+const defaultAgent = makeProxyAgent(CFG.proxyUrl);
+const proxyList = loadProxyList();
 
 function gcFetch(url, opts = {}) {
   return new Promise((resolve, reject) => {
@@ -117,10 +146,10 @@ function gcFetch(url, opts = {}) {
       method: opts.method || "GET",
       headers: {
         "User-Agent": CFG.userAgent,
-        "Accept": "application/json",
+        Accept: "application/json",
         ...(opts.headers || {}),
       },
-      agent: proxyAgent,
+      agent: opts.agent !== undefined ? opts.agent : defaultAgent,
       timeout: opts.timeout || 30000,
     };
 
@@ -147,21 +176,17 @@ function gcFetch(url, opts = {}) {
   });
 }
 
-// ======================== HMAC & CRYPTO (§1 dari guide) ========================
+// ======================== HMAC & CRYPTO ========================
 
 function xorBuffers(a, b) {
   const len = Math.max(a.length, b.length);
   const out = Buffer.alloc(len);
-  for (let i = 0; i < len; i++) {
-    out[i] = (a[i] || 0) ^ (b[i] || 0);
-  }
+  for (let i = 0; i < len; i++) out[i] = (a[i] || 0) ^ (b[i] || 0);
   return out;
 }
 
 function deriveHmacKey(j3, k3) {
-  const a = Buffer.from(j3, "base64");
-  const b = Buffer.from(k3, "base64");
-  return xorBuffers(a, b);
+  return xorBuffers(Buffer.from(j3, "base64"), Buffer.from(k3, "base64"));
 }
 
 function base64urlNoPad(buf) {
@@ -176,17 +201,13 @@ function generateProof(method, path, timestamp, deviceId, hmacKey) {
 }
 
 function computeOpenCdata(bearerToken) {
-  return createHash("sha256")
-    .update("gc-cdata|" + bearerToken)
-    .digest("hex")
-    .slice(0, 32);
+  return createHash("sha256").update("gc-cdata|" + bearerToken).digest("hex").slice(0, 32);
 }
 
-// ======================== BUNDLE KEY EXTRACTION (§1) ========================
+// ======================== BUNDLE KEY EXTRACTION ========================
 
 async function downloadBundle() {
   log("Download bundle dari GoCollect...");
-
   const htmlRes = await gcFetch(GC_BASE + "/");
   if (htmlRes.status !== 200) throw new Error(`HTML fetch gagal: ${htmlRes.status}`);
 
@@ -203,8 +224,10 @@ async function downloadBundle() {
 }
 
 function extractKeysFromBundle(code) {
-  const keyMatch = code.match(/const\s+\w{1,3}="([A-Za-z0-9+/=]{30,60})",\s*\w{1,3}="([A-Za-z0-9+/=]{30,60})"/);
-  if (!keyMatch) throw new Error('Pattern HMAC keys tidak ditemukan di bundle');
+  const keyMatch = code.match(
+    /const\s+\w{1,3}="([A-Za-z0-9+/=]{30,60})",\s*\w{1,3}="([A-Za-z0-9+/=]{30,60})"/
+  );
+  if (!keyMatch) throw new Error("Pattern HMAC keys tidak ditemukan di bundle");
 
   const j3 = keyMatch[1];
   const k3 = keyMatch[2];
@@ -212,9 +235,10 @@ function extractKeysFromBundle(code) {
   const buildMatch = code.match(/"(1[789]\d{11,12})"/);
   const buildId = buildMatch ? buildMatch[1] : null;
 
-  const skMatch = code.match(/sitekey:\s*"(0x[A-Fa-f0-9]{16,})"/)
-    || code.match(/siteKey:\s*"(0x[A-Fa-f0-9]{16,})"/)
-    || code.match(/"(0x4AAAAAAA[A-Fa-f0-9]{14,})"/);
+  const skMatch =
+    code.match(/sitekey:\s*"(0x[A-Fa-f0-9]{16,})"/) ||
+    code.match(/siteKey:\s*"(0x[A-Fa-f0-9]{16,})"/) ||
+    code.match(/"(0x4AAAAAAA[A-Fa-f0-9]{14,})"/);
   const sitekey = skMatch ? skMatch[1] : null;
 
   return { j3, k3, buildId, sitekey };
@@ -227,8 +251,7 @@ async function updateKeys() {
 
   const keys = {
     bundleName,
-    j3,
-    k3,
+    j3, k3,
     hmacKeyHex: hmacKey.toString("hex"),
     buildId: buildId || "1790571883747",
     sitekey: sitekey || CFG.sitekey,
@@ -237,10 +260,7 @@ async function updateKeys() {
 
   writeFileSync(KEYS_FILE, JSON.stringify(keys, null, 2));
   log(`Keys updated: bundle=${bundleName}, build=${keys.buildId}`);
-  log(`j3=${j3}`);
-  log(`k3=${k3}`);
-  log(`HMAC key (hex)=${keys.hmacKeyHex}`);
-  if (keys.sitekey) log(`Sitekey=${keys.sitekey}`);
+  if (keys.sitekey && keys.sitekey !== CFG.sitekey) log(`Sitekey=${keys.sitekey}`);
 
   return keys;
 }
@@ -250,7 +270,7 @@ function loadKeys() {
   return JSON.parse(readFileSync(KEYS_FILE, "utf-8"));
 }
 
-// ======================== 2CAPTCHA (§2, §7) ========================
+// ======================== 2CAPTCHA ========================
 
 async function captchaBalance() {
   const res = await gcFetch(
@@ -262,19 +282,16 @@ async function captchaBalance() {
 
 async function solveTurnstile(action, cData) {
   if (manualSolver) return manualSolver.solve(action, cData);
-  if (!CFG.captchaKey) throw new Error("CAPTCHA_API_KEY belum diset (pakai --manual-captcha untuk solve manual)");
+  if (!CFG.captchaKey)
+    throw new Error("CAPTCHA_API_KEY belum diset (pakai --manual-captcha untuk solve manual)");
 
   const keys = loadKeys();
   const sitekey = keys?.sitekey || CFG.sitekey;
   if (!sitekey) throw new Error("Sitekey belum diset (jalankan --update-keys dulu)");
 
   const params = new URLSearchParams({
-    key: CFG.captchaKey,
-    method: "turnstile",
-    sitekey,
-    pageurl: "https://gocollect.fun",
-    action,
-    json: "1",
+    key: CFG.captchaKey, method: "turnstile", sitekey,
+    pageurl: "https://gocollect.fun", action, json: "1",
     useragent: CFG.userAgent,
   });
 
@@ -284,19 +301,13 @@ async function solveTurnstile(action, cData) {
     if (CFG.captchaProxyLogin) params.set("proxylogin", CFG.captchaProxyLogin);
     if (CFG.captchaProxyPass) params.set("proxypassword", CFG.captchaProxyPass);
   }
-
   if (cData) params.set("data", cData);
 
   log(`Solve turnstile action=${action} cData=${cData ? "yes" : "no"}...`);
 
-  const submitRes = await gcFetch(
-    `https://2captcha.com/in.php?${params.toString()}`,
-    { timeout: 30000 }
-  );
+  const submitRes = await gcFetch(`https://2captcha.com/in.php?${params.toString()}`, { timeout: 30000 });
   const submitData = submitRes.json();
-  if (submitData?.status !== 1) {
-    throw new Error(`2captcha submit gagal: ${JSON.stringify(submitData)}`);
-  }
+  if (submitData?.status !== 1) throw new Error(`2captcha submit gagal: ${JSON.stringify(submitData)}`);
 
   const taskId = submitData.request;
   log(`Task submitted: ${taskId}`);
@@ -308,16 +319,9 @@ async function solveTurnstile(action, cData) {
       { timeout: 15000 }
     );
     const pollData = pollRes.json();
-
-    if (pollData?.status === 1) {
-      log(`Token solved (${pollData.request.length} chars)`);
-      return pollData.request;
-    }
-    if (pollData?.request !== "CAPCHA_NOT_READY") {
-      throw new Error(`2captcha error: ${JSON.stringify(pollData)}`);
-    }
+    if (pollData?.status === 1) { log(`Token solved (${pollData.request.length} chars)`); return pollData.request; }
+    if (pollData?.request !== "CAPCHA_NOT_READY") throw new Error(`2captcha error: ${JSON.stringify(pollData)}`);
   }
-
   throw new Error("2captcha timeout (120s)");
 }
 
@@ -326,12 +330,7 @@ async function solveTurnstile(action, cData) {
 let manualSolver = null;
 
 class ManualCaptchaSolver {
-  constructor() {
-    this.port = CFG.captchaPort;
-    this.server = null;
-    this.tunnelUrl = null;
-    this.pending = null;
-  }
+  constructor() { this.port = CFG.captchaPort; this.server = null; this.tunnelUrl = null; this.pending = null; }
 
   async start() {
     this.server = http.createServer((req, res) => this._handle(req, res));
@@ -340,25 +339,25 @@ class ManualCaptchaSolver {
     await this._startTunnel();
     if (this.tunnelUrl) {
       log(`Captcha URL publik: ${this.tunnelUrl}`);
-      await this._sendTelegram(`Bot GoCollect dimulai (manual captcha).\nNanti kamu akan dapat link captcha di sini.`);
+      await sendTelegram(`Bot GoCollect dimulai (manual captcha).\nNanti kamu akan dapat link captcha di sini.`);
     }
   }
 
   async _startTunnel() {
-    return new Promise((resolve) => {
+    return new Promise((res) => {
       try {
         const cf = spawn("cloudflared", ["tunnel", "--url", `http://localhost:${this.port}`], {
           stdio: ["ignore", "pipe", "pipe"],
         });
-        const onData = (data) => {
-          const m = data.toString().match(/(https:\/\/[a-z0-9-]+\.trycloudflare\.com)/);
-          if (m && !this.tunnelUrl) { this.tunnelUrl = m[1]; resolve(); }
+        const onData = (d) => {
+          const m = d.toString().match(/(https:\/\/[a-z0-9-]+\.trycloudflare\.com)/);
+          if (m && !this.tunnelUrl) { this.tunnelUrl = m[1]; res(); }
         };
         cf.stdout.on("data", onData);
         cf.stderr.on("data", onData);
-        cf.on("error", () => { this.tunnelUrl = null; resolve(); });
-        setTimeout(() => { if (!this.tunnelUrl) resolve(); }, 20000);
-      } catch { resolve(); }
+        cf.on("error", () => { this.tunnelUrl = null; res(); });
+        setTimeout(() => { if (!this.tunnelUrl) res(); }, 20000);
+      } catch { res(); }
     });
   }
 
@@ -377,19 +376,9 @@ class ManualCaptchaSolver {
       req.on("end", () => {
         try {
           const { token } = JSON.parse(body);
-          if (this.pending && token) {
-            this.pending(token);
-            this.pending = null;
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end('{"ok":true}');
-          } else {
-            res.writeHead(400, { "Content-Type": "application/json" });
-            res.end('{"ok":false}');
-          }
-        } catch {
-          res.writeHead(400);
-          res.end("err");
-        }
+          if (this.pending && token) { this.pending(token); this.pending = null; res.writeHead(200, { "Content-Type": "application/json" }); res.end('{"ok":true}'); }
+          else { res.writeHead(400, { "Content-Type": "application/json" }); res.end('{"ok":false}'); }
+        } catch { res.writeHead(400); res.end("err"); }
       });
     } else {
       res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
@@ -402,29 +391,11 @@ class ManualCaptchaSolver {
     const solveUrl = `${base}/solve?action=${encodeURIComponent(action)}&cdata=${encodeURIComponent(cData || "")}`;
     log(`CAPTCHA DIBUTUHKAN — buka link ini:`);
     log(solveUrl);
-    await this._sendTelegram(`Captcha dibutuhkan!\n\nAction: ${action}\nBuka link:\n${solveUrl}\n\nTimeout 5 menit.`);
+    await sendTelegram(`Captcha dibutuhkan!\n\nAction: ${action}\nBuka link:\n${solveUrl}\n\nTimeout 5 menit.`);
     return new Promise((resolve, reject) => {
       this.pending = resolve;
-      setTimeout(() => {
-        if (this.pending) {
-          this.pending = null;
-          reject(new Error("Captcha timeout 5 menit — tidak ada yang solve"));
-        }
-      }, 300000);
+      setTimeout(() => { if (this.pending) { this.pending = null; reject(new Error("Captcha timeout 5 menit")); } }, 300000);
     });
-  }
-
-  async _sendTelegram(text) {
-    if (!CFG.telegramToken || !CFG.telegramChatId) return;
-    try {
-      await gcFetch(`https://api.telegram.org/bot${CFG.telegramToken}/sendMessage`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ chat_id: CFG.telegramChatId, text }),
-      });
-    } catch (e) {
-      logErr(`Telegram gagal: ${e.message}`);
-    }
   }
 
   _html(sitekey, action, cdata) {
@@ -455,14 +426,184 @@ fetch("/submit",{method:"POST",headers:{"Content-Type":"application/json"},body:
 .then(r=>r.json()).then(d=>{
 var s=document.getElementById("st");
 if(d.ok){s.className="ok";s.textContent="Token terkirim! Tutup halaman ini."}
-else{s.className="err";s.textContent="Error — mungkin sudah expired, refresh halaman."}
-}).catch(e=>{document.getElementById("st").className="err";document.getElementById("st").textContent="Network error"});
+else{s.className="err";s.textContent="Error, refresh halaman."}
+}).catch(()=>{document.getElementById("st").className="err";document.getElementById("st").textContent="Network error"});
 }
 </script></body></html>`;
   }
 }
 
-// ======================== GOCOLLECT API CLIENT ========================
+// ======================== MOVEMENT SIMULATION ========================
+
+const DEG_TO_RAD = Math.PI / 180;
+const RAD_TO_DEG = 180 / Math.PI;
+const EARTH_R = 6371000;
+
+function haversine(lat1, lng1, lat2, lng2) {
+  const dLat = (lat2 - lat1) * DEG_TO_RAD;
+  const dLng = (lng2 - lng1) * DEG_TO_RAD;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * DEG_TO_RAD) * Math.cos(lat2 * DEG_TO_RAD) * Math.sin(dLng / 2) ** 2;
+  return EARTH_R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function bearing(lat1, lng1, lat2, lng2) {
+  const dLng = (lng2 - lng1) * DEG_TO_RAD;
+  const la1 = lat1 * DEG_TO_RAD;
+  const la2 = lat2 * DEG_TO_RAD;
+  const y = Math.sin(dLng) * Math.cos(la2);
+  const x = Math.cos(la1) * Math.sin(la2) - Math.sin(la1) * Math.cos(la2) * Math.cos(dLng);
+  return Math.atan2(y, x);
+}
+
+function movePoint(lat, lng, bearingRad, distMeters) {
+  const d = distMeters / EARTH_R;
+  const la1 = lat * DEG_TO_RAD;
+  const lo1 = lng * DEG_TO_RAD;
+  const la2 = Math.asin(Math.sin(la1) * Math.cos(d) + Math.cos(la1) * Math.sin(d) * Math.cos(bearingRad));
+  const lo2 = lo1 + Math.atan2(
+    Math.sin(bearingRad) * Math.sin(d) * Math.cos(la1),
+    Math.cos(d) - Math.sin(la1) * Math.sin(la2)
+  );
+  return { lat: la2 * RAD_TO_DEG, lng: lo2 * RAD_TO_DEG };
+}
+
+function generateWalkPath(fromLat, fromLng, toLat, toLng) {
+  const dist = haversine(fromLat, fromLng, toLat, toLng);
+  if (dist < 5) return [{ lat: toLat, lng: toLng }];
+
+  const walkSpeed = 1.0 + Math.random() * 0.5;
+  const stepTime = 2.5 + Math.random() * 1.5;
+  const stepDist = walkSpeed * stepTime;
+  const numSteps = Math.max(2, Math.ceil(dist / stepDist));
+  const bear = bearing(fromLat, fromLng, toLat, toLng);
+
+  const path = [];
+  for (let i = 1; i <= numSteps; i++) {
+    const frac = i / numSteps;
+    const intermLat = fromLat + (toLat - fromLat) * frac;
+    const intermLng = fromLng + (toLng - fromLng) * frac;
+
+    const jitterM = 1 + Math.random() * 3;
+    const jitterAngle = Math.random() * 2 * Math.PI;
+    const jittered = movePoint(intermLat, intermLng, jitterAngle, jitterM);
+
+    path.push({
+      lat: jittered.lat,
+      lng: jittered.lng,
+      accuracy: 8 + Math.random() * 7,
+      delayMs: Math.round((stepTime + (Math.random() - 0.5) * 1.0) * 1000),
+    });
+  }
+
+  path[path.length - 1].lat = toLat + (Math.random() - 0.5) * 0.00002;
+  path[path.length - 1].lng = toLng + (Math.random() - 0.5) * 0.00002;
+
+  return path;
+}
+
+// ======================== STATS TRACKER ========================
+
+class StatsTracker {
+  constructor() {
+    this.data = { days: {}, wallets: {} };
+    this._load();
+  }
+
+  _today() {
+    return new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
+  }
+
+  _load() {
+    try {
+      if (existsSync(STATS_FILE)) this.data = JSON.parse(readFileSync(STATS_FILE, "utf-8"));
+    } catch {}
+  }
+
+  _save() {
+    try { writeFileSync(STATS_FILE, JSON.stringify(this.data, null, 2)); } catch {}
+  }
+
+  _dayBucket() {
+    const d = this._today();
+    if (!this.data.days[d]) this.data.days[d] = { opened: 0, wins: [], errors: 0, bans: 0, skipped: 0, started: new Date().toISOString() };
+    return this.data.days[d];
+  }
+
+  _walletBucket(addr) {
+    if (!this.data.wallets[addr]) this.data.wallets[addr] = { totalOpened: 0, totalWins: 0, lastActive: null, status: "idle" };
+    return this.data.wallets[addr];
+  }
+
+  recordOpen(addr, crateId, reward) {
+    const day = this._dayBucket();
+    const wal = this._walletBucket(addr);
+    day.opened++;
+    wal.totalOpened++;
+    wal.lastActive = new Date().toISOString();
+    if (reward) {
+      const win = { wallet: addr.slice(0, 10), crateId, reward, time: new Date().toLocaleString("id-ID", { timeZone: "Asia/Jakarta" }) };
+      day.wins.push(win);
+      wal.totalWins++;
+    }
+    this._save();
+  }
+
+  recordSkip(addr) {
+    this._dayBucket().skipped++;
+    this._save();
+  }
+
+  recordError(addr, error) {
+    this._dayBucket().errors++;
+    const wal = this._walletBucket(addr);
+    wal.lastError = error;
+    wal.lastActive = new Date().toISOString();
+    this._save();
+  }
+
+  recordBan(addr) {
+    this._dayBucket().bans++;
+    const wal = this._walletBucket(addr);
+    wal.status = "banned";
+    this._save();
+  }
+
+  setWalletStatus(addr, status) {
+    this._walletBucket(addr).status = status;
+    this._save();
+  }
+
+  getDailyReport() {
+    const d = this._today();
+    const day = this.data.days[d] || { opened: 0, wins: [], errors: 0, bans: 0, skipped: 0 };
+    const winRate = day.opened > 0 ? ((day.wins.length / day.opened) * 100).toFixed(1) : "0";
+    return { date: d, ...day, winCount: day.wins.length, winRate };
+  }
+
+  getWalletSummaries() {
+    return Object.entries(this.data.wallets).map(([addr, w]) => ({ addr: addr.slice(0, 10) + "...", ...w }));
+  }
+}
+
+const stats = new StatsTracker();
+
+// ======================== STATE (for dashboard) ========================
+
+function saveState(walletStates) {
+  try {
+    const report = stats.getDailyReport();
+    const state = {
+      updatedAt: new Date().toISOString(),
+      daily: report,
+      wallets: walletStates,
+    };
+    writeFileSync(STATE_FILE, JSON.stringify(state, null, 2));
+  } catch {}
+}
+
+// ======================== SOLANA WALLET ========================
 
 function solanaKeypairFromPrivate(pk) {
   if (typeof pk === "string") {
@@ -486,12 +627,17 @@ function solanaSign(message, keypair) {
   return bs58.encode(sig);
 }
 
+// ======================== GOCOLLECT API CLIENT ========================
+
 class GCClient {
   constructor(keypair, opts = {}) {
     this.keypair = keypair;
     this.address = keypair.publicKey.toBase58();
     this.lat = opts.lat || CFG.defaultLat;
     this.lng = opts.lng || CFG.defaultLng;
+    this.proxyAgent = opts.proxyAgent || defaultAgent;
+    this.walletIndex = opts.walletIndex || 0;
+    this.dryRun = opts.dryRun || false;
 
     this.bearer = null;
     this.deviceId = null;
@@ -517,22 +663,17 @@ class GCClient {
       "x-gc-build": this.buildId,
       "Content-Type": "application/json",
     };
-
     if (this.deviceId) headers["x-gc-device"] = this.deviceId;
     if (this.bearer) headers["Authorization"] = `Bearer ${this.bearer}`;
     if (opts.turnstileToken) headers["x-gc-turnstile"] = opts.turnstileToken;
 
-    const url = `${GC_API}${path}`;
-    const fetchOpts = { method, headers, timeout: 20000 };
+    const fetchOpts = { method, headers, timeout: 20000, agent: this.proxyAgent };
     if (body) fetchOpts.body = JSON.stringify(body);
 
-    const res = await gcFetch(url, fetchOpts);
+    const res = await gcFetch(`${GC_API}${path}`, fetchOpts);
 
     const newDevId = res.headers["x-gc-device"];
-    if (newDevId && !this.deviceId) {
-      this.deviceId = newDevId;
-      log(`Device ID: ${this.deviceId}`);
-    }
+    if (newDevId && !this.deviceId) { this.deviceId = newDevId; log(`Device ID: ${this.deviceId}`); }
 
     const minBuild = res.headers["x-gc-min-build"];
     if (minBuild && Number(minBuild) > Number(this.buildId)) {
@@ -544,11 +685,10 @@ class GCClient {
   }
 
   async login() {
-    log(`Login wallet ${this.address.slice(0, 10)}...`);
+    log(`[W${this.walletIndex}] Login ${this.address.slice(0, 10)}...`);
+    stats.setWalletStatus(this.address, "logging_in");
 
-    const challengeRes = await this.apiRequest("POST", "/v1/auth/challenge", {
-      address: this.address,
-    });
+    const challengeRes = await this.apiRequest("POST", "/v1/auth/challenge", { address: this.address });
     const challenge = challengeRes.json();
 
     if (challengeRes.status !== 200 || !challenge?.nonce) {
@@ -556,15 +696,11 @@ class GCClient {
     }
 
     const nonce = challenge.nonce;
-    log(`Nonce: ${nonce}`);
-
     const signature = solanaSign(nonce, this.keypair);
     const token = await solveTurnstile("signin", nonce);
 
     const loginRes = await this.apiRequest("POST", "/v1/auth/wallet", {
-      address: this.address,
-      signature,
-      nonce,
+      address: this.address, signature, nonce,
     }, { turnstileToken: token });
 
     const loginData = loginRes.json();
@@ -574,242 +710,269 @@ class GCClient {
     }
 
     this.bearer = loginData.token;
-    log(`Login OK, bearer ${this.bearer.slice(0, 20)}...`);
+    log(`[W${this.walletIndex}] Login OK`);
+    stats.setWalletStatus(this.address, "logged_in");
 
     return loginData;
   }
 
   async getCrates() {
-    log(`Get crates di (${this.lat}, ${this.lng})...`);
+    log(`[W${this.walletIndex}] Get crates (${this.lat.toFixed(4)}, ${this.lng.toFixed(4)})...`);
 
-    const res = await this.apiRequest("POST", "/v1/crates", {
-      lat: this.lat,
-      lng: this.lng,
-    });
-
+    const res = await this.apiRequest("POST", "/v1/crates", { lat: this.lat, lng: this.lng });
     const data = res.json();
 
-    if (res.status !== 200) {
-      throw new Error(`Crates gagal: ${res.status} ${res.body}`);
-    }
+    if (res.status !== 200) throw new Error(`Crates gagal: ${res.status} ${res.body}`);
 
     const crates = data?.crates || data || [];
-    log(`${Array.isArray(crates) ? crates.length : "?"} crates ditemukan`);
+    log(`[W${this.walletIndex}] ${Array.isArray(crates) ? crates.length : "?"} crates ditemukan`);
     return crates;
   }
 
-  async freshFix() {
-    const res = await this.apiRequest("POST", "/v1/location/fix", {
-      lat: this.lat,
-      lng: this.lng,
-      accuracy: 10 + Math.random() * 5,
+  async sendLocationFix(lat, lng, accuracy) {
+    return this.apiRequest("POST", "/v1/location/fix", {
+      lat, lng,
+      accuracy: accuracy || 10 + Math.random() * 5,
       timestamp: Date.now(),
     });
+  }
 
-    if (res.status !== 200) {
-      log(`Fix response: ${res.status} ${res.body.slice(0, 200)}`);
+  async walkTo(targetLat, targetLng) {
+    const path = generateWalkPath(this.lat, this.lng, targetLat, targetLng);
+    const dist = haversine(this.lat, this.lng, targetLat, targetLng);
+    log(`[W${this.walletIndex}] Jalan ke crate (${dist.toFixed(0)}m, ${path.length} steps)...`);
+
+    for (const step of path) {
+      await this.sendLocationFix(step.lat, step.lng, step.accuracy);
+      this.lat = step.lat;
+      this.lng = step.lng;
+      await sleep(step.delayMs || 2500);
     }
 
-    return res;
+    log(`[W${this.walletIndex}] Sampai di (${this.lat.toFixed(6)}, ${this.lng.toFixed(6)})`);
   }
 
   async openCrate(crateId) {
-    log(`Open crate ${crateId}...`);
+    log(`[W${this.walletIndex}] Open crate ${crateId}...`);
+
+    if (this.dryRun) {
+      log(`[W${this.walletIndex}] DRY RUN — skip open`);
+      return { success: true, data: { dryRun: true }, dryRun: true };
+    }
 
     const cData = computeOpenCdata(this.bearer);
-
-    log("Pre-mint turnstile token untuk open...");
     const token = await solveTurnstile("open", cData);
 
-    log("Kirim fresh fix...");
-    await this.freshFix();
+    await this.sendLocationFix(this.lat, this.lng);
 
     const res = await this.apiRequest("POST", `/v1/crates/${crateId}/open`, {
-      lat: this.lat,
-      lng: this.lng,
+      lat: this.lat, lng: this.lng,
     }, { turnstileToken: token });
 
     const data = res.json();
 
     if (res.status === 200) {
-      log(`CRATE OPENED! ${JSON.stringify(data)}`);
+      log(`[W${this.walletIndex}] CRATE OPENED! ${JSON.stringify(data)}`);
       return { success: true, data };
     }
+    if (res.status === 410) { log(`[W${this.walletIndex}] Crate expired`); return { success: false, reason: "expired" }; }
+    if (data?.error === "try_later") { log(`[W${this.walletIndex}] try_later`); return { success: false, reason: "try_later" }; }
+    if (data?.error === "stale") { logErr(`[W${this.walletIndex}] FIX BASI`); return { success: false, reason: "stale" }; }
+    if (res.status === 403) { logErr(`[W${this.walletIndex}] 403: ${res.body.slice(0, 200)}`); return { success: false, reason: "forbidden" }; }
+    if (res.status === 429) { log(`[W${this.walletIndex}] Rate limited`); return { success: false, reason: "rate_limit" }; }
 
-    if (res.status === 410) {
-      log(`Crate expired (diambil orang lain)`);
-      return { success: false, reason: "expired" };
-    }
-
-    if (data?.error === "try_later") {
-      log(`try_later — crate sedang rotate (15 menit)`);
-      return { success: false, reason: "try_later" };
-    }
-
-    if (data?.error === "stale") {
-      logErr(`FIX BASI — token solve terlalu lama? Cek urutan pre-mint`);
-      return { success: false, reason: "stale" };
-    }
-
-    if (res.status === 403) {
-      logErr(`403: ${res.body.slice(0, 300)}`);
-      logErr("Cek: HMAC key, cData, build ID, device ID (lihat guide §1-§4)");
-      return { success: false, reason: "forbidden" };
-    }
-
-    logErr(`Open gagal: ${res.status} ${res.body.slice(0, 300)}`);
+    logErr(`[W${this.walletIndex}] Open gagal: ${res.status} ${res.body.slice(0, 200)}`);
     return { success: false, reason: "unknown" };
   }
 
   async farmCycle() {
     await this.login();
+
+    await this.sendLocationFix(this.lat, this.lng);
+    await sleep(1000 + Math.random() * 2000);
+
     const crates = await this.getCrates();
 
     if (!Array.isArray(crates) || crates.length === 0) {
-      log("Tidak ada crate tersedia");
-      return { opened: 0, skipped: 0 };
+      log(`[W${this.walletIndex}] Tidak ada crate`);
+      stats.setWalletStatus(this.address, "no_crates");
+      return { opened: 0, skipped: 0, wins: 0 };
     }
 
-    let opened = 0;
-    let skipped = 0;
+    let opened = 0, skipped = 0, wins = 0;
+    let cratesThisSession = 0;
 
     for (const crate of crates) {
       const id = crate.id || crate._id || crate.crateId;
-      if (!id) {
-        skipped++;
-        continue;
-      }
+      if (!id) { skipped++; continue; }
 
+      const crateLat = crate.lat || crate.latitude || this.lat;
+      const crateLng = crate.lng || crate.longitude || this.lng;
+
+      stats.setWalletStatus(this.address, `walking_to_crate`);
+      await this.walkTo(crateLat, crateLng);
+
+      await sleep(500 + Math.random() * 1500);
+
+      stats.setWalletStatus(this.address, `opening_crate`);
       const result = await this.openCrate(id);
 
       if (result.success) {
         opened++;
-      } else if (result.reason === "try_later") {
-        skipped++;
-        continue;
-      } else if (result.reason === "expired") {
-        skipped++;
-        continue;
+        const reward = result.data?.reward || result.data?.item || result.data?.prize || null;
+        const rewardStr = reward ? JSON.stringify(reward) : null;
+        stats.recordOpen(this.address, id, rewardStr);
+
+        if (rewardStr && !result.dryRun) {
+          wins++;
+          await sendTelegram(
+            `<b>WIN!</b> Wallet ${this.address.slice(0, 10)}...\nCrate: ${id}\nReward: ${rewardStr}`
+          );
+        }
       } else if (result.reason === "forbidden") {
-        logErr("403 — kemungkinan kunci HMAC basi, stop cycle");
+        stats.recordError(this.address, "403 forbidden");
+        logErr(`[W${this.walletIndex}] 403 — stop cycle`);
         break;
+      } else if (result.reason === "rate_limit") {
+        log(`[W${this.walletIndex}] Rate limited — tunggu 60s`);
+        await sleep(60000);
+      } else {
+        skipped++;
+        stats.recordSkip(this.address);
       }
 
-      await sleep(2000 + Math.random() * 3000);
+      cratesThisSession++;
+      if (cratesThisSession >= CFG.cratesPerSession && crates.indexOf(crate) < crates.length - 1) {
+        const breakMs = (CFG.breakMinMinutes + Math.random() * (CFG.breakMaxMinutes - CFG.breakMinMinutes)) * 60000;
+        log(`[W${this.walletIndex}] Break ${(breakMs / 60000).toFixed(1)} menit (anti-ban pattern)...`);
+        stats.setWalletStatus(this.address, "break");
+        await sleep(breakMs);
+        cratesThisSession = 0;
+      } else {
+        const delay = 3000 + Math.random() * 5000;
+        await sleep(delay);
+      }
     }
 
-    log(`Cycle selesai: ${opened} opened, ${skipped} skipped`);
-    return { opened, skipped };
+    stats.setWalletStatus(this.address, "idle");
+    log(`[W${this.walletIndex}] Cycle done: ${opened} opened, ${skipped} skip, ${wins} wins`);
+    return { opened, skipped, wins };
   }
 }
 
-// ======================== DIAGNOSE (§7, §8) ========================
+// ======================== DIAGNOSE ========================
 
 async function diagnose() {
   console.log("=== GoCollect Farm Diagnostic ===\n");
 
-  console.log("1. Saldo 2captcha:");
-  try {
-    const bal = await captchaBalance();
-    if (bal?.request === "ERROR_ZERO_BALANCE" || parseFloat(bal?.request) <= 0) {
-      console.log(`   GAGAL: Saldo habis (${bal?.request}). Topup dulu!`);
-    } else {
-      console.log(`   OK: $${bal?.request}`);
-    }
-  } catch (e) {
-    console.log(`   ERROR: ${e.message}`);
-  }
-
-  console.log("\n2. Bundle GoCollect:");
+  console.log("1. Bundle GoCollect:");
   try {
     const { bundleName, code } = await downloadBundle();
     const { j3, k3, buildId, sitekey } = extractKeysFromBundle(code);
     console.log(`   Bundle: ${bundleName}`);
-    console.log(`   Build ID (x2): ${buildId}`);
+    console.log(`   Build ID: ${buildId}`);
     console.log(`   j3: ${j3.slice(0, 20)}...`);
     console.log(`   k3: ${k3.slice(0, 20)}...`);
     if (sitekey) console.log(`   Sitekey: ${sitekey}`);
+    else console.log(`   Sitekey: TIDAK DITEMUKAN di bundle`);
 
     const saved = loadKeys();
     if (saved) {
-      if (saved.j3 === j3 && saved.k3 === k3) {
-        console.log("   Keys: SAMA dengan yang tersimpan (OK)");
-      } else {
-        console.log("   Keys: BERBEDA! Jalankan --update-keys untuk update");
-      }
+      console.log(saved.j3 === j3 && saved.k3 === k3 ? "   Keys: OK (sama)" : "   Keys: BERBEDA! Jalankan --update-keys");
     } else {
       console.log("   Keys: Belum tersimpan. Jalankan --update-keys");
     }
-  } catch (e) {
-    console.log(`   ERROR: ${e.message}`);
+  } catch (e) { console.log(`   ERROR: ${e.message}`); }
+
+  console.log("\n2. Captcha:");
+  if (CFG.captchaKey) {
+    try {
+      const bal = await captchaBalance();
+      console.log(`   2captcha: $${bal?.request || "?"}`);
+    } catch (e) { console.log(`   ERROR: ${e.message}`); }
+  } else {
+    console.log("   2captcha: TIDAK DISET (pakai --manual-captcha)");
   }
 
   console.log("\n3. Proxy:");
-  if (CFG.proxyUrl) {
-    console.log(`   Configured: ${CFG.proxyUrl}`);
-    try {
-      const res = await gcFetch("https://httpbin.org/ip", { timeout: 10000 });
-      const data = res.json();
-      console.log(`   IP terdeteksi: ${data?.origin || "unknown"}`);
-    } catch (e) {
-      console.log(`   ERROR: ${e.message}`);
-    }
+  if (proxyList.length > 0) {
+    console.log(`   Proxy list: ${proxyList.length} proxy dari ${CFG.proxyListFile}`);
+  } else if (CFG.proxyUrl) {
+    console.log(`   Single proxy: ${CFG.proxyUrl.replace(/:[^:@]+@/, ":***@")}`);
   } else {
-    console.log("   TIDAK DISET — disarankan pakai proxy");
+    console.log("   TIDAK DISET — WAJIB untuk multi-wallet");
   }
 
   console.log("\n4. Wallets:");
-  if (CFG.walletsFile && existsSync(CFG.walletsFile)) {
-    try {
-      const wallets = JSON.parse(readFileSync(CFG.walletsFile, "utf-8"));
-      console.log(`   File: ${CFG.walletsFile}`);
-      console.log(`   Jumlah: ${wallets.length} wallet`);
-    } catch (e) {
-      console.log(`   ERROR parse: ${e.message}`);
-    }
+  const seedFile = process.env.SOLANA_SEED_FILE || "";
+  if (seedFile && existsSync(seedFile)) {
+    const count = parseInt(process.env.WALLET_COUNT || "1");
+    console.log(`   Seed file: ada, ${count} wallet akan di-derive`);
+  } else if (CFG.walletsFile && existsSync(CFG.walletsFile)) {
+    const raw = JSON.parse(readFileSync(CFG.walletsFile, "utf-8"));
+    console.log(`   Wallets file: ${raw.length} wallet`);
   } else {
-    console.log(`   File tidak ditemukan: ${CFG.walletsFile || "(belum diset)"}`);
+    console.log("   TIDAK DITEMUKAN");
   }
 
-  console.log("\n5. Config:");
-  console.log(`   User-Agent: ${CFG.userAgent.slice(0, 60)}...`);
-  console.log(`   GPS: ${CFG.defaultLat}, ${CFG.defaultLng}`);
-  console.log(`   Captcha proxy: ${CFG.captchaProxy || "TIDAK DISET"}`);
-  console.log(`   Max log size: ${(CFG.maxLogSize / 1024 / 1024).toFixed(1)} MB`);
+  console.log("\n5. Telegram:");
+  if (CFG.telegramToken && CFG.telegramChatId) {
+    console.log("   Configured OK");
+    try {
+      await sendTelegram("Diagnostic test — bot terhubung.");
+      console.log("   Test message sent");
+    } catch (e) { console.log(`   Send gagal: ${e.message}`); }
+  } else {
+    console.log("   TIDAK DISET");
+  }
+
+  console.log("\n6. Stats:");
+  const report = stats.getDailyReport();
+  console.log(`   Hari ini (${report.date}): ${report.opened} opened, ${report.winCount} wins (${report.winRate}%), ${report.errors} errors`);
 
   console.log("\n=== Diagnostic selesai ===");
 }
 
 // ======================== MAIN ========================
 
-function sleep(ms) {
-  return new Promise((r) => setTimeout(r, ms));
-}
+function sleep(ms) { return new Promise((r) => setTimeout(r, ms)); }
+
+function randomDelay(minMs, maxMs) { return sleep(minMs + Math.random() * (maxMs - minMs)); }
 
 async function main() {
   const args = process.argv.slice(2);
 
-  if (args.includes("--diagnose")) {
-    await diagnose();
-    return;
-  }
+  if (args.includes("--diagnose")) { await diagnose(); return; }
+  if (args.includes("--update-keys")) { await updateKeys(); return; }
 
-  if (args.includes("--update-keys")) {
-    await updateKeys();
+  const isDryRun = args.includes("--dry-run");
+  const isLive = args.includes("--live");
+  const isLoop = args.includes("--loop");
+
+  if (!isDryRun && !isLive) {
+    console.log("Pilih mode:");
+    console.log("  --dry-run   Login + getCrates + simulasi jalan, TANPA buka crate");
+    console.log("  --live      Beneran buka crate");
+    console.log("  --loop      Ulangi terus (gabungkan dengan --live)");
+    console.log("\nContoh:");
+    console.log("  node gc-farm.mjs --dry-run --wallet 0           # test 1 wallet");
+    console.log("  node gc-farm.mjs --live --wallet 0              # live 1 wallet");
+    console.log("  node gc-farm.mjs --live --manual-captcha        # live semua + manual captcha");
+    console.log("  node gc-farm.mjs --live --loop --manual-captcha # live loop");
     return;
   }
 
   if (args.includes("--manual-captcha")) {
     manualSolver = new ManualCaptchaSolver();
     await manualSolver.start();
-    log("Mode: MANUAL CAPTCHA — link solve dikirim via Telegram");
+    log("Mode: MANUAL CAPTCHA");
   }
 
-  log("=== GoCollect Farm Start ===");
+  log(`=== GoCollect Farm ${isDryRun ? "DRY RUN" : "LIVE"} ===");
 
   let keys = loadKeys();
   if (!keys) {
-    log("Keys belum ada, download dari bundle...");
+    log("Keys belum ada, download bundle...");
     keys = await updateKeys();
   }
 
@@ -821,79 +984,120 @@ async function main() {
     const walletIdx = args.indexOf("--wallet");
     if (walletIdx >= 0 && args[walletIdx + 1] !== undefined) {
       const idx = parseInt(args[walletIdx + 1]);
-      keypairs = [solanaKeypairFromSeed(mnemonic, idx)];
-      log(`Mode single wallet dari seed: index ${idx}`);
+      keypairs = [{ kp: solanaKeypairFromSeed(mnemonic, idx), index: idx }];
+      log(`Single wallet dari seed: index ${idx}`);
     } else {
       const count = parseInt(process.env.WALLET_COUNT || "1");
-      for (let i = 0; i < count; i++) {
-        keypairs.push(solanaKeypairFromSeed(mnemonic, i));
+      const scaleIdx = args.indexOf("--scale");
+      const limit = scaleIdx >= 0 ? parseInt(args[scaleIdx + 1]) : count;
+      for (let i = 0; i < Math.min(limit, count); i++) {
+        keypairs.push({ kp: solanaKeypairFromSeed(mnemonic, i), index: i });
       }
     }
     log(`${keypairs.length} Solana wallet(s) dari seed`);
   } else if (CFG.walletsFile && existsSync(CFG.walletsFile)) {
     const raw = JSON.parse(readFileSync(CFG.walletsFile, "utf-8"));
     const walletIdx = args.indexOf("--wallet");
-    let list = raw;
+    let list = raw.map((w, i) => ({ w, i }));
     if (walletIdx >= 0 && args[walletIdx + 1] !== undefined) {
       const idx = parseInt(args[walletIdx + 1]);
-      if (idx >= 0 && idx < raw.length) { list = [raw[idx]]; log(`Mode single wallet: index ${idx}`); }
+      if (idx >= 0 && idx < raw.length) list = [{ w: raw[idx], i: idx }];
     }
-    for (const w of list) {
+    const scaleIdx = args.indexOf("--scale");
+    if (scaleIdx >= 0) list = list.slice(0, parseInt(args[scaleIdx + 1]));
+
+    for (const { w, i } of list) {
       const pk = w.privateKey || w.private_key || w.key || w.secretKey;
       if (!pk) continue;
-      try { keypairs.push(solanaKeypairFromPrivate(pk)); } catch (e) { logErr(`Skip wallet: ${e.message}`); }
+      try { keypairs.push({ kp: solanaKeypairFromPrivate(pk), index: i }); } catch (e) { logErr(`Skip wallet ${i}: ${e.message}`); }
     }
   } else {
-    logErr(`Wallet file tidak ditemukan. Set SOLANA_SEED_FILE atau WALLETS_FILE di .env`);
+    logErr("Wallet file tidak ditemukan. Set SOLANA_SEED_FILE atau WALLETS_FILE di .env");
     process.exit(1);
   }
 
-  if (keypairs.length === 0) {
-    logErr("Tidak ada Solana wallet yang valid");
-    process.exit(1);
+  if (keypairs.length === 0) { logErr("Tidak ada Solana wallet"); process.exit(1); }
+
+  log(`Farm ${keypairs.length} wallet(s)${isDryRun ? " (DRY RUN)" : ""}...`);
+
+  if (proxyList.length > 0) {
+    log(`${proxyList.length} proxy loaded — 1 per wallet`);
+  } else if (keypairs.length > 1 && !CFG.proxyUrl) {
+    log("PERINGATAN: Multi-wallet tanpa proxy! Sangat disarankan pakai PROXY_LIST_FILE");
   }
 
-  log(`Farm ${keypairs.length} wallet(s)...`);
+  do {
+    let totalOpened = 0, totalWins = 0;
+    const walletStates = [];
 
-  let totalOpened = 0;
+    for (let wi = 0; wi < keypairs.length; wi++) {
+      const { kp, index } = keypairs[wi];
+      const proxyUrl = proxyList.length > 0 ? proxyList[wi % proxyList.length] : CFG.proxyUrl;
+      const agent = makeProxyAgent(proxyUrl);
 
-  for (let i = 0; i < keypairs.length; i++) {
-    const kp = keypairs[i];
+      log(`--- Wallet ${wi + 1}/${keypairs.length} (index ${index}, ${kp.publicKey.toBase58().slice(0, 10)}...) ---`);
+      if (proxyUrl) log(`Proxy: ${proxyUrl.replace(/:[^:@]+@/, ":***@")}`);
 
-    log(`--- Wallet ${i + 1}/${keypairs.length} (${kp.publicKey.toBase58().slice(0, 10)}...) ---`);
+      try {
+        const client = new GCClient(kp, {
+          lat: CFG.defaultLat, lng: CFG.defaultLng,
+          proxyAgent: agent,
+          walletIndex: index,
+          dryRun: isDryRun,
+        });
 
-    try {
-      const client = new GCClient(kp, {
-        lat: CFG.defaultLat,
-        lng: CFG.defaultLng,
-      });
+        const result = await client.farmCycle();
+        totalOpened += result.opened;
+        totalWins += result.wins;
 
-      const result = await client.farmCycle();
-      totalOpened += result.opened;
-    } catch (e) {
-      logErr(`Wallet ${i} (${kp.publicKey.toBase58().slice(0, 10)}): ${e.message}`);
+        walletStates.push({
+          index, addr: kp.publicKey.toBase58().slice(0, 10),
+          status: "done", opened: result.opened, wins: result.wins,
+        });
+      } catch (e) {
+        logErr(`Wallet ${index}: ${e.message}`);
+        stats.recordError(kp.publicKey.toBase58(), e.message);
 
-      if (e.message.includes("403") || e.message.includes("verification_required")) {
-        log("Kemungkinan kunci basi, coba update...");
-        try {
-          await updateKeys();
-          log("Keys updated, lanjut wallet berikut");
-        } catch (ue) {
-          logErr(`Update keys gagal: ${ue.message}`);
+        walletStates.push({
+          index, addr: kp.publicKey.toBase58().slice(0, 10),
+          status: "error", error: e.message.slice(0, 100),
+        });
+
+        if (e.message.includes("403") || e.message.includes("verification_required")) {
+          try { await updateKeys(); log("Keys updated"); } catch (ue) { logErr(`Update keys gagal: ${ue.message}`); }
         }
+      }
+
+      saveState(walletStates);
+
+      if (wi < keypairs.length - 1) {
+        const delay = CFG.walletDelay + Math.random() * 10000;
+        log(`Delay ${(delay / 1000).toFixed(0)}s sebelum wallet berikutnya...`);
+        await sleep(delay);
       }
     }
 
-    if (i < keypairs.length - 1) {
-      log(`Delay ${CFG.walletDelay / 1000}s sebelum wallet berikut...`);
-      await sleep(CFG.walletDelay);
-    }
-  }
+    log(`=== Cycle done: ${totalOpened} opened, ${totalWins} wins ===");
 
-  log(`=== Farm selesai: ${totalOpened} total crate opened ===`);
+    const report = stats.getDailyReport();
+    await sendTelegram(
+      `<b>GoCollect Daily</b> (${report.date})\n` +
+      `Opened: ${report.opened}\n` +
+      `Wins: ${report.winCount} (${report.winRate}%)\n` +
+      `Errors: ${report.errors}\n` +
+      `${isDryRun ? "(DRY RUN)" : ""}`
+    );
+
+    if (isLoop) {
+      const waitHrs = CFG.loopHours + (Math.random() - 0.5);
+      log(`Loop mode: tunggu ${waitHrs.toFixed(1)} jam...`);
+      await sleep(waitHrs * 3600000);
+
+      try { await updateKeys(); } catch (e) { logErr(`Auto update-keys gagal: ${e.message}`); }
+    }
+  } while (isLoop);
+
+  log("=== Farm selesai ===");
 }
 
-main().catch((e) => {
-  logErr(`Fatal: ${e.message}`);
-  process.exit(1);
-});
+main().catch((e) => { logErr(`Fatal: ${e.message}`); process.exit(1); });
