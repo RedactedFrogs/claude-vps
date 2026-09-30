@@ -1,10 +1,10 @@
 #!/usr/bin/env node
-// Turnstile captcha solver via headless Chrome
-// Navigate to gocollect.fun (correct origin), wait for Turnstile JS to load,
-// then render widget with specified action/cData
-// Usage: node gc-captcha-solver.mjs <sitekey> <action> [cdata]
+// Turnstile captcha solver v4 — puppeteer-extra + stealth plugin
+// Intercepts the page's own Turnstile flow instead of injecting a new widget
+import puppeteerExtra from "puppeteer-extra";
+import StealthPlugin from "puppeteer-extra-plugin-stealth";
 
-import puppeteer from "puppeteer-core";
+puppeteerExtra.use(StealthPlugin());
 
 const CHROME_PATH = "/usr/bin/google-chrome";
 
@@ -15,14 +15,14 @@ async function solve(sitekey, action, cdata) {
 
   if (useXvfb) {
     const { spawn: sp } = await import("node:child_process");
-    xvfbProc = sp("Xvfb", [display, "-screen", "0", "412x915x24", "-ac"], {
+    xvfbProc = sp("Xvfb", [display, "-screen", "0", "1280x720x24", "-ac"], {
       stdio: "ignore", detached: true,
     });
     process.env.DISPLAY = display;
-    await new Promise((r) => setTimeout(r, 500));
+    await new Promise((r) => setTimeout(r, 800));
   }
 
-  const browser = await puppeteer.launch({
+  const browser = await puppeteerExtra.launch({
     executablePath: CHROME_PATH,
     headless: false,
     args: [
@@ -30,124 +30,170 @@ async function solve(sitekey, action, cdata) {
       "--disable-setuid-sandbox",
       "--disable-blink-features=AutomationControlled",
       "--disable-dev-shm-usage",
-      "--disable-gpu",
       "--disable-features=IsolateOrigins,site-per-process",
-      "--window-size=412,915",
+      "--window-size=1280,720",
       "--lang=en-US,en",
       `--display=${process.env.DISPLAY}`,
     ],
+    ignoreDefaultArgs: ["--enable-automation"],
   });
 
   try {
-    const page = await browser.newPage();
+    const page = (await browser.pages())[0] || await browser.newPage();
 
-    // Stealth: remove webdriver traces
-    await page.evaluateOnNewDocument(() => {
-      Object.defineProperty(navigator, "webdriver", { get: () => undefined });
-      window.chrome = { runtime: {}, loadTimes: () => ({}), csi: () => ({}) };
-      Object.defineProperty(navigator, "plugins", {
-        get: () => {
-          const arr = [
-            { name: "Chrome PDF Plugin", filename: "internal-pdf-viewer" },
-            { name: "Chrome PDF Viewer", filename: "mhjfbmdgcfjbbpaeojofohoefgiehjai" },
-            { name: "Native Client", filename: "internal-nacl-plugin" },
-          ];
-          arr.refresh = () => {};
-          return arr;
-        },
-      });
-      Object.defineProperty(navigator, "languages", { get: () => ["en-US", "en"] });
-      Object.defineProperty(navigator, "platform", { get: () => "Linux armv81" });
-      Object.defineProperty(navigator, "hardwareConcurrency", { get: () => 8 });
-      Object.defineProperty(navigator, "deviceMemory", { get: () => 8 });
-      Object.defineProperty(navigator, "maxTouchPoints", { get: () => 5 });
+    await page.setUserAgent(
+      "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.6613.127 Safari/537.36"
+    );
+    await page.setViewport({ width: 1280, height: 720 });
 
-      // WebGL vendor/renderer
-      const getParameter = WebGLRenderingContext.prototype.getParameter;
-      WebGLRenderingContext.prototype.getParameter = function (param) {
-        if (param === 37445) return "Google Inc. (Qualcomm)";
-        if (param === 37446) return "ANGLE (Qualcomm, Adreno (TM) 750, OpenGL ES 3.2)";
-        return getParameter.call(this, param);
-      };
+    // Intercept turnstile token from any network request
+    let resolveToken, rejectToken;
+    const tokenPromise = new Promise((res, rej) => {
+      resolveToken = res;
+      rejectToken = rej;
+    });
+    const timeout = setTimeout(() => rejectToken(new Error("solve timeout 60s")), 60000);
 
-      // Permissions
-      const originalQuery = window.Permissions?.prototype?.query;
-      if (originalQuery) {
-        window.Permissions.prototype.query = (params) =>
-          params.name === "notifications"
-            ? Promise.resolve({ state: Notification.permission })
-            : originalQuery.call(window.Permissions.prototype, params);
+    // Method 1: Intercept outgoing XHR/fetch that carries cf-turnstile-response
+    page.on("request", (req) => {
+      const url = req.url();
+      const post = req.postData();
+      if (post && post.includes("cf-turnstile-response=")) {
+        const m = post.match(/cf-turnstile-response=([^&]+)/);
+        if (m) { clearTimeout(timeout); resolveToken(decodeURIComponent(m[1])); }
       }
     });
 
-    await page.setUserAgent(
-      "Mozilla/5.0 (Linux; Android 14; Pixel 8 Pro) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.6613.127 Mobile Safari/537.36"
-    );
-    await page.setViewport({ width: 412, height: 915, isMobile: true, hasTouch: true, deviceScaleFactor: 2.625 });
-
-    // Navigate to gocollect.fun favicon (lightweight, sets origin correctly)
-    await page.goto("https://gocollect.fun/favicon.ico", {
-      waitUntil: "load",
-      timeout: 20000,
-    }).catch(() => {});
-
-    // Navigate to actual page with domcontentloaded (faster than networkidle)
-    await page.goto("https://gocollect.fun", {
-      waitUntil: "domcontentloaded",
-      timeout: 45000,
+    // Method 2: Expose a callback from inside the page
+    await page.exposeFunction("__solverGotToken", (t) => {
+      clearTimeout(timeout);
+      resolveToken(t);
     });
 
-    // Short wait for page scripts to initialize
-    await new Promise((r) => setTimeout(r, 2000));
+    // Hook into turnstile.render to capture callback tokens
+    await page.evaluateOnNewDocument((sk, act, cd) => {
+      // Override turnstile.render once it's defined
+      let hooked = false;
+      const hookTurnstile = () => {
+        if (hooked || !window.turnstile) return;
+        hooked = true;
+        const origRender = window.turnstile.render.bind(window.turnstile);
+        window.turnstile.render = function(container, opts) {
+          const origCb = opts.callback;
+          opts.callback = (token) => {
+            window.__solverGotToken(token);
+            if (origCb) origCb(token);
+          };
+          return origRender(container, opts);
+        };
+      };
+      // Check periodically until turnstile is defined
+      const iv = setInterval(() => {
+        hookTurnstile();
+        if (hooked) clearInterval(iv);
+      }, 50);
+      setTimeout(() => clearInterval(iv), 30000);
+    }, sitekey, action, cdata || "");
 
-    // Render Turnstile widget with our action/cData
-    const token = await page.evaluate(
-      async (sk, act, cd) => {
-        // Create a container div (append, don't replace body)
+    // Navigate to gocollect.fun
+    console.error("Navigating to gocollect.fun...");
+    await page.goto("https://gocollect.fun", {
+      waitUntil: "domcontentloaded",
+      timeout: 30000,
+    });
+
+    console.error("Page loaded, waiting for Turnstile...");
+
+    // Wait for the page to fully load and Turnstile to initialize
+    await new Promise((r) => setTimeout(r, 3000));
+
+    // Check if turnstile is loaded, if not inject it and render manually
+    const needsManualRender = await page.evaluate(() => !window.turnstile);
+
+    if (needsManualRender) {
+      console.error("Turnstile not found, loading manually...");
+      await page.evaluate(async (sk, act, cd) => {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement("script");
+          s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
+          s.onload = () => {
+            const t = setInterval(() => {
+              if (window.turnstile) { clearInterval(t); resolve(); }
+            }, 100);
+            setTimeout(() => { clearInterval(t); reject(new Error("ts init timeout")); }, 15000);
+          };
+          s.onerror = () => reject(new Error("ts load fail"));
+          document.head.appendChild(s);
+        });
+
         const container = document.createElement("div");
         container.id = "cf-solver";
-        container.style.cssText = "position:fixed;bottom:0;left:0;z-index:99999";
+        container.style.cssText = "position:fixed;bottom:10px;left:10px;z-index:99999";
         document.body.appendChild(container);
 
-        // Wait for turnstile to be available (page already loads it)
-        if (!window.turnstile) {
-          await new Promise((resolve, reject) => {
-            const s = document.createElement("script");
-            s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
-            s.onload = () => {
-              const t = setInterval(() => {
-                if (window.turnstile) { clearInterval(t); resolve(); }
-              }, 100);
-              setTimeout(() => { clearInterval(t); reject(new Error("turnstile init timeout")); }, 20000);
-            };
-            s.onerror = () => reject(new Error("turnstile script load failed"));
-            document.head.appendChild(s);
-          });
-        }
-
-        return new Promise((resolve, reject) => {
-          const to = setTimeout(() => reject(new Error("solve timeout 45s")), 45000);
-          const opts = {
-            sitekey: sk,
-            action: act,
-            theme: "dark",
-            size: "normal",
-            retry: "auto",
-            "retry-interval": 3000,
-            callback: (t) => { clearTimeout(to); resolve(t); },
-            "error-callback": (e) => { clearTimeout(to); reject(new Error("turnstile error: " + e)); },
-            "timeout-callback": () => { clearTimeout(to); reject(new Error("turnstile timeout")); },
-            "expired-callback": () => { clearTimeout(to); reject(new Error("turnstile expired")); },
-          };
-          if (cd) opts.cData = cd;
-          window.turnstile.render("#cf-solver", opts);
+        window.turnstile.render("#cf-solver", {
+          sitekey: sk,
+          action: act,
+          cData: cd || undefined,
+          theme: "light",
+          size: "normal",
+          retry: "auto",
+          "retry-interval": 4000,
+          callback: (t) => window.__solverGotToken(t),
+          "error-callback": (e) => console.error("TS error:", e),
         });
-      },
-      sitekey,
-      action,
-      cdata || ""
-    );
+      }, sitekey, action, cdata || "");
+    } else {
+      // Turnstile already exists — the hook we installed should capture it.
+      // Also try to manually render a second widget as backup
+      console.error("Turnstile found, rendering backup widget...");
+      await page.evaluate((sk, act, cd) => {
+        const container = document.createElement("div");
+        container.id = "cf-solver-backup";
+        container.style.cssText = "position:fixed;bottom:10px;right:10px;z-index:99999";
+        document.body.appendChild(container);
+        window.turnstile.render("#cf-solver-backup", {
+          sitekey: sk,
+          action: act,
+          cData: cd || undefined,
+          theme: "light",
+          size: "normal",
+          retry: "auto",
+          "retry-interval": 4000,
+          callback: (t) => window.__solverGotToken(t),
+          "error-callback": (e) => console.error("TS error:", e),
+        });
+      }, sitekey, action, cdata || "");
+    }
 
+    // If there's a visible Turnstile checkbox iframe, click it
+    try {
+      await page.waitForSelector('iframe[src*="challenges.cloudflare.com"]', { timeout: 10000 });
+      console.error("Turnstile iframe found, attempting click...");
+      const frames = page.frames();
+      for (const frame of frames) {
+        if (frame.url().includes("challenges.cloudflare.com")) {
+          try {
+            // Wait for the checkbox/verify element
+            const checkbox = await frame.waitForSelector(
+              'input[type="checkbox"], .cb-i, #challenge-stage',
+              { timeout: 5000 }
+            );
+            if (checkbox) {
+              await new Promise((r) => setTimeout(r, 500 + Math.random() * 1000));
+              await checkbox.click();
+              console.error("Clicked Turnstile element");
+            }
+          } catch { /* no clickable element, managed mode */ }
+        }
+      }
+    } catch {
+      console.error("No Turnstile iframe found (managed mode)");
+    }
+
+    console.error("Waiting for token...");
+    const token = await tokenPromise;
+    console.error("Token received!");
     return token;
   } finally {
     await browser.close();
