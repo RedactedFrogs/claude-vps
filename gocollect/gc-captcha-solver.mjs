@@ -1,12 +1,37 @@
 #!/usr/bin/env node
-// Turnstile captcha solver v4 — puppeteer-extra + stealth plugin
-// Intercepts the page's own Turnstile flow instead of injecting a new widget
+// Turnstile captcha solver v5 — stealth + human behavior simulation
 import puppeteerExtra from "puppeteer-extra";
 import StealthPlugin from "puppeteer-extra-plugin-stealth";
 
 puppeteerExtra.use(StealthPlugin());
 
 const CHROME_PATH = "/usr/bin/google-chrome";
+
+function rand(min, max) { return min + Math.random() * (max - min); }
+function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+async function humanMouseMove(page, steps = 5) {
+  const vp = page.viewport();
+  let x = rand(100, vp.width - 100), y = rand(100, vp.height - 100);
+  for (let i = 0; i < steps; i++) {
+    x += rand(-80, 80);
+    y += rand(-60, 60);
+    x = Math.max(10, Math.min(vp.width - 10, x));
+    y = Math.max(10, Math.min(vp.height - 10, y));
+    await page.mouse.move(x, y, { steps: Math.floor(rand(3, 8)) });
+    await sleep(rand(50, 200));
+  }
+}
+
+async function humanScroll(page) {
+  await page.evaluate(() => {
+    window.scrollBy(0, Math.floor(Math.random() * 200 + 50));
+  });
+  await sleep(rand(300, 800));
+  await page.evaluate(() => {
+    window.scrollBy(0, -Math.floor(Math.random() * 100 + 30));
+  });
+}
 
 async function solve(sitekey, action, cdata) {
   const useXvfb = !process.env.DISPLAY;
@@ -19,7 +44,7 @@ async function solve(sitekey, action, cdata) {
       stdio: "ignore", detached: true,
     });
     process.env.DISPLAY = display;
-    await new Promise((r) => setTimeout(r, 800));
+    await sleep(800);
   }
 
   const browser = await puppeteerExtra.launch({
@@ -46,33 +71,22 @@ async function solve(sitekey, action, cdata) {
     );
     await page.setViewport({ width: 1280, height: 720 });
 
-    // Intercept turnstile token from any network request
+    // Token capture setup
     let resolveToken, rejectToken;
     const tokenPromise = new Promise((res, rej) => {
       resolveToken = res;
       rejectToken = rej;
     });
-    const timeout = setTimeout(() => rejectToken(new Error("solve timeout 60s")), 60000);
+    const timeout = setTimeout(() => rejectToken(new Error("solve timeout 90s")), 90000);
 
-    // Method 1: Intercept outgoing XHR/fetch that carries cf-turnstile-response
-    page.on("request", (req) => {
-      const url = req.url();
-      const post = req.postData();
-      if (post && post.includes("cf-turnstile-response=")) {
-        const m = post.match(/cf-turnstile-response=([^&]+)/);
-        if (m) { clearTimeout(timeout); resolveToken(decodeURIComponent(m[1])); }
-      }
-    });
-
-    // Method 2: Expose a callback from inside the page
+    // Expose callback for token capture
     await page.exposeFunction("__solverGotToken", (t) => {
       clearTimeout(timeout);
       resolveToken(t);
     });
 
-    // Hook into turnstile.render to capture callback tokens
-    await page.evaluateOnNewDocument((sk, act, cd) => {
-      // Override turnstile.render once it's defined
+    // Hook turnstile.render to capture token via callback
+    await page.evaluateOnNewDocument(() => {
       let hooked = false;
       const hookTurnstile = () => {
         if (hooked || !window.turnstile) return;
@@ -87,113 +101,132 @@ async function solve(sitekey, action, cdata) {
           return origRender(container, opts);
         };
       };
-      // Check periodically until turnstile is defined
       const iv = setInterval(() => {
         hookTurnstile();
         if (hooked) clearInterval(iv);
       }, 50);
       setTimeout(() => clearInterval(iv), 30000);
-    }, sitekey, action, cdata || "");
+    });
 
-    // Navigate to gocollect.fun
-    console.error("Navigating to gocollect.fun...");
+    // Navigate to page
+    console.error("[solver] Navigating...");
     await page.goto("https://gocollect.fun", {
       waitUntil: "domcontentloaded",
       timeout: 30000,
     });
 
-    console.error("Page loaded, waiting for Turnstile...");
+    // Simulate human-like behavior before Turnstile renders
+    console.error("[solver] Simulating human behavior...");
+    await sleep(rand(1000, 2000));
+    await humanMouseMove(page, 8);
+    await sleep(rand(500, 1000));
+    await humanScroll(page);
+    await sleep(rand(500, 1500));
+    await humanMouseMove(page, 5);
+    await sleep(rand(1000, 2000));
 
-    // Wait for the page to fully load and Turnstile to initialize
-    await new Promise((r) => setTimeout(r, 3000));
+    // Wait for page to fully load
+    await page.waitForFunction(() => document.readyState === "complete", { timeout: 15000 }).catch(() => {});
+    await sleep(rand(500, 1000));
 
-    // Check if turnstile is loaded, if not inject it and render manually
-    const needsManualRender = await page.evaluate(() => !window.turnstile);
+    // Check if turnstile is already loaded by the page
+    const hasTurnstile = await page.evaluate(() => !!window.turnstile);
+    console.error(`[solver] Turnstile present: ${hasTurnstile}`);
 
-    if (needsManualRender) {
-      console.error("Turnstile not found, loading manually...");
-      await page.evaluate(async (sk, act, cd) => {
-        await new Promise((resolve, reject) => {
+    if (!hasTurnstile) {
+      // Load turnstile manually
+      console.error("[solver] Loading Turnstile script...");
+      await page.evaluate(() => {
+        return new Promise((resolve, reject) => {
           const s = document.createElement("script");
           s.src = "https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";
           s.onload = () => {
             const t = setInterval(() => {
               if (window.turnstile) { clearInterval(t); resolve(); }
             }, 100);
-            setTimeout(() => { clearInterval(t); reject(new Error("ts init timeout")); }, 15000);
+            setTimeout(() => { clearInterval(t); reject(new Error("ts init timeout")); }, 20000);
           };
           s.onerror = () => reject(new Error("ts load fail"));
           document.head.appendChild(s);
         });
-
-        const container = document.createElement("div");
-        container.id = "cf-solver";
-        container.style.cssText = "position:fixed;bottom:10px;left:10px;z-index:99999";
-        document.body.appendChild(container);
-
-        window.turnstile.render("#cf-solver", {
-          sitekey: sk,
-          action: act,
-          cData: cd || undefined,
-          theme: "light",
-          size: "normal",
-          retry: "auto",
-          "retry-interval": 4000,
-          callback: (t) => window.__solverGotToken(t),
-          "error-callback": (e) => console.error("TS error:", e),
-        });
-      }, sitekey, action, cdata || "");
-    } else {
-      // Turnstile already exists — the hook we installed should capture it.
-      // Also try to manually render a second widget as backup
-      console.error("Turnstile found, rendering backup widget...");
-      await page.evaluate((sk, act, cd) => {
-        const container = document.createElement("div");
-        container.id = "cf-solver-backup";
-        container.style.cssText = "position:fixed;bottom:10px;right:10px;z-index:99999";
-        document.body.appendChild(container);
-        window.turnstile.render("#cf-solver-backup", {
-          sitekey: sk,
-          action: act,
-          cData: cd || undefined,
-          theme: "light",
-          size: "normal",
-          retry: "auto",
-          "retry-interval": 4000,
-          callback: (t) => window.__solverGotToken(t),
-          "error-callback": (e) => console.error("TS error:", e),
-        });
-      }, sitekey, action, cdata || "");
+      });
     }
 
-    // If there's a visible Turnstile checkbox iframe, click it
-    try {
-      await page.waitForSelector('iframe[src*="challenges.cloudflare.com"]', { timeout: 10000 });
-      console.error("Turnstile iframe found, attempting click...");
-      const frames = page.frames();
-      for (const frame of frames) {
-        if (frame.url().includes("challenges.cloudflare.com")) {
-          try {
-            // Wait for the checkbox/verify element
-            const checkbox = await frame.waitForSelector(
-              'input[type="checkbox"], .cb-i, #challenge-stage',
-              { timeout: 5000 }
-            );
-            if (checkbox) {
-              await new Promise((r) => setTimeout(r, 500 + Math.random() * 1000));
-              await checkbox.click();
-              console.error("Clicked Turnstile element");
-            }
-          } catch { /* no clickable element, managed mode */ }
-        }
+    // More human behavior before rendering widget
+    await humanMouseMove(page, 4);
+    await sleep(rand(500, 1000));
+
+    // Render Turnstile widget
+    console.error("[solver] Rendering Turnstile widget...");
+    await page.evaluate((sk, act, cd) => {
+      const container = document.createElement("div");
+      container.id = "cf-solver";
+      container.style.cssText = "position:fixed;bottom:10px;left:10px;z-index:99999;background:#fff;padding:5px;border-radius:4px";
+      document.body.appendChild(container);
+
+      window.turnstile.render("#cf-solver", {
+        sitekey: sk,
+        action: act,
+        cData: cd || undefined,
+        theme: "light",
+        size: "normal",
+        retry: "auto",
+        "retry-interval": 5000,
+        callback: (t) => window.__solverGotToken(t),
+        "error-callback": (e) => console.error("TS error:", e),
+        "timeout-callback": () => console.error("TS timeout"),
+      });
+    }, sitekey, action, cdata || "");
+
+    // Simulate more human activity while waiting
+    console.error("[solver] Widget rendered, simulating activity while waiting...");
+
+    // Background human simulation loop
+    const humanLoop = (async () => {
+      for (let i = 0; i < 15; i++) {
+        await sleep(rand(2000, 4000));
+        await humanMouseMove(page, rand(2, 5));
+        if (Math.random() > 0.5) await humanScroll(page);
       }
-    } catch {
-      console.error("No Turnstile iframe found (managed mode)");
-    }
+    })();
 
-    console.error("Waiting for token...");
+    // Try to click Turnstile iframe checkbox if visible
+    sleep(3000).then(async () => {
+      try {
+        const iframes = await page.$$('iframe[src*="challenges.cloudflare.com"]');
+        for (const iframe of iframes) {
+          const frame = await iframe.contentFrame();
+          if (!frame) continue;
+          try {
+            const el = await frame.waitForSelector(
+              'input[type="checkbox"], .cb-i, #challenge-stage, [role="checkbox"]',
+              { timeout: 3000 }
+            );
+            if (el) {
+              await sleep(rand(300, 800));
+              const box = await el.boundingBox();
+              if (box) {
+                await page.mouse.move(
+                  box.x + box.width / 2 + rand(-3, 3),
+                  box.y + box.height / 2 + rand(-3, 3),
+                  { steps: Math.floor(rand(5, 12)) }
+                );
+                await sleep(rand(100, 300));
+                await page.mouse.click(
+                  box.x + box.width / 2 + rand(-2, 2),
+                  box.y + box.height / 2 + rand(-2, 2)
+                );
+                console.error("[solver] Clicked Turnstile element");
+              }
+            }
+          } catch { /* managed mode, no clickable element */ }
+        }
+      } catch { /* no iframe */ }
+    });
+
+    console.error("[solver] Waiting for token...");
     const token = await tokenPromise;
-    console.error("Token received!");
+    console.error("[solver] Got token!");
     return token;
   } finally {
     await browser.close();
