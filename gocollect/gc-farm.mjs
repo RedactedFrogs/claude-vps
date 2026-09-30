@@ -17,7 +17,11 @@ import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import https from "node:https";
 import http from "node:http";
-import { Wallet } from "ethers";
+import { Keypair } from "@solana/web3.js";
+import nacl from "tweetnacl";
+import bs58 from "bs58";
+import * as bip39 from "bip39";
+import { derivePath } from "ed25519-hd-key";
 import { SocksProxyAgent } from "socks-proxy-agent";
 import { spawn } from "node:child_process";
 
@@ -460,10 +464,32 @@ else{s.className="err";s.textContent="Error — mungkin sudah expired, refresh h
 
 // ======================== GOCOLLECT API CLIENT ========================
 
+function solanaKeypairFromPrivate(pk) {
+  if (typeof pk === "string") {
+    if (pk.startsWith("[")) return Keypair.fromSecretKey(Uint8Array.from(JSON.parse(pk)));
+    return Keypair.fromSecretKey(bs58.decode(pk));
+  }
+  if (Array.isArray(pk)) return Keypair.fromSecretKey(Uint8Array.from(pk));
+  return Keypair.fromSecretKey(pk);
+}
+
+function solanaKeypairFromSeed(mnemonic, index = 0) {
+  const seed = bip39.mnemonicToSeedSync(mnemonic);
+  const path = `m/44'/501'/${index}'/0'`;
+  const { key } = derivePath(path, seed.toString("hex"));
+  return Keypair.fromSeed(key);
+}
+
+function solanaSign(message, keypair) {
+  const msgBytes = typeof message === "string" ? Buffer.from(message) : message;
+  const sig = nacl.sign.detached(msgBytes, keypair.secretKey);
+  return bs58.encode(sig);
+}
+
 class GCClient {
-  constructor(walletKey, opts = {}) {
-    this.wallet = new Wallet(walletKey);
-    this.address = this.wallet.address;
+  constructor(keypair, opts = {}) {
+    this.keypair = keypair;
+    this.address = keypair.publicKey.toBase58();
     this.lat = opts.lat || CFG.defaultLat;
     this.lng = opts.lng || CFG.defaultLng;
 
@@ -532,7 +558,7 @@ class GCClient {
     const nonce = challenge.nonce;
     log(`Nonce: ${nonce}`);
 
-    const signature = await this.wallet.signMessage(nonce);
+    const signature = solanaSign(nonce, this.keypair);
     const token = await solveTurnstile("signin", nonce);
 
     const loginRes = await this.apiRequest("POST", "/v1/auth/wallet", {
@@ -787,47 +813,65 @@ async function main() {
     keys = await updateKeys();
   }
 
-  if (!CFG.walletsFile || !existsSync(CFG.walletsFile)) {
-    logErr(`Wallet file tidak ditemukan: ${CFG.walletsFile}`);
+  const seedFile = process.env.SOLANA_SEED_FILE || "";
+  let keypairs = [];
+
+  if (seedFile && existsSync(seedFile)) {
+    const mnemonic = readFileSync(seedFile, "utf-8").trim();
+    const walletIdx = args.indexOf("--wallet");
+    if (walletIdx >= 0 && args[walletIdx + 1] !== undefined) {
+      const idx = parseInt(args[walletIdx + 1]);
+      keypairs = [solanaKeypairFromSeed(mnemonic, idx)];
+      log(`Mode single wallet dari seed: index ${idx}`);
+    } else {
+      const count = parseInt(process.env.WALLET_COUNT || "1");
+      for (let i = 0; i < count; i++) {
+        keypairs.push(solanaKeypairFromSeed(mnemonic, i));
+      }
+    }
+    log(`${keypairs.length} Solana wallet(s) dari seed`);
+  } else if (CFG.walletsFile && existsSync(CFG.walletsFile)) {
+    const raw = JSON.parse(readFileSync(CFG.walletsFile, "utf-8"));
+    const walletIdx = args.indexOf("--wallet");
+    let list = raw;
+    if (walletIdx >= 0 && args[walletIdx + 1] !== undefined) {
+      const idx = parseInt(args[walletIdx + 1]);
+      if (idx >= 0 && idx < raw.length) { list = [raw[idx]]; log(`Mode single wallet: index ${idx}`); }
+    }
+    for (const w of list) {
+      const pk = w.privateKey || w.private_key || w.key || w.secretKey;
+      if (!pk) continue;
+      try { keypairs.push(solanaKeypairFromPrivate(pk)); } catch (e) { logErr(`Skip wallet: ${e.message}`); }
+    }
+  } else {
+    logErr(`Wallet file tidak ditemukan. Set SOLANA_SEED_FILE atau WALLETS_FILE di .env`);
     process.exit(1);
   }
 
-  const allWallets = JSON.parse(readFileSync(CFG.walletsFile, "utf-8"));
-
-  const walletIdx = args.indexOf("--wallet");
-  let wallets = allWallets;
-  if (walletIdx >= 0 && args[walletIdx + 1] !== undefined) {
-    const idx = parseInt(args[walletIdx + 1]);
-    if (idx >= 0 && idx < allWallets.length) {
-      wallets = [allWallets[idx]];
-      log(`Mode single wallet: index ${idx}`);
-    }
+  if (keypairs.length === 0) {
+    logErr("Tidak ada Solana wallet yang valid");
+    process.exit(1);
   }
 
-  log(`Farm ${wallets.length} wallet(s)...`);
+  log(`Farm ${keypairs.length} wallet(s)...`);
 
   let totalOpened = 0;
 
-  for (let i = 0; i < wallets.length; i++) {
-    const w = wallets[i];
-    const pk = w.privateKey || w.private_key || w.key;
-    if (!pk) {
-      logErr(`Wallet ${i}: tidak ada private key, skip`);
-      continue;
-    }
+  for (let i = 0; i < keypairs.length; i++) {
+    const kp = keypairs[i];
 
-    log(`--- Wallet ${i + 1}/${wallets.length} ---`);
+    log(`--- Wallet ${i + 1}/${keypairs.length} (${kp.publicKey.toBase58().slice(0, 10)}...) ---`);
 
     try {
-      const client = new GCClient(pk, {
-        lat: w.lat || CFG.defaultLat,
-        lng: w.lng || CFG.defaultLng,
+      const client = new GCClient(kp, {
+        lat: CFG.defaultLat,
+        lng: CFG.defaultLng,
       });
 
       const result = await client.farmCycle();
       totalOpened += result.opened;
     } catch (e) {
-      logErr(`Wallet ${i}: ${e.message}`);
+      logErr(`Wallet ${i} (${kp.publicKey.toBase58().slice(0, 10)}): ${e.message}`);
 
       if (e.message.includes("403") || e.message.includes("verification_required")) {
         log("Kemungkinan kunci basi, coba update...");
@@ -840,7 +884,7 @@ async function main() {
       }
     }
 
-    if (i < wallets.length - 1) {
+    if (i < keypairs.length - 1) {
       log(`Delay ${CFG.walletDelay / 1000}s sebelum wallet berikut...`);
       await sleep(CFG.walletDelay);
     }
