@@ -233,9 +233,12 @@ def main():
 
     if not registered:
         log.info("No registered miners. Waiting for lift to open...")
-        # Wait and retry registration periodically
+        last_lift_log = 0
         while not registered:
-            time.sleep(60)
+            import datetime as _dt
+            minute = _dt.datetime.now(_dt.timezone.utc).minute
+            wait = 10 if (minute >= 55 or minute <= 2) else 30
+            time.sleep(wait)
             for m in unregistered[:5]:
                 key, info = register_miner(m.pubkey, m.name)
                 if key:
@@ -245,10 +248,16 @@ def main():
                     unregistered.remove(m)
                     log.info(f"Registered [{m.idx}] {m.name}")
                     save_json(MINERS_FILE, {"miners": [m.to_dict() for m in miners]})
+                    notify(f"✅ Miner [{m.idx}] {m.name} terdaftar! Mulai mining.")
                 elif info.get("error") == "one_miner_per_address":
                     ip_blocked = True
                     break
-                elif info.get("error") != "lift_full":
+                elif info.get("error") == "lift_full":
+                    if time.time() - last_lift_log > 300:
+                        log.info(f"Lift still full, retrying every {wait}s...")
+                        last_lift_log = time.time()
+                    break
+                else:
                     log.info(f"Register error: {info}")
                     break
             if ip_blocked:
