@@ -684,6 +684,8 @@ class GCClient {
     this.deviceId = null;
     this.hmacKey = null;
     this.buildId = null;
+    this._sessionStart = Date.now();
+    this._fixLogged = false;
 
     const keys = loadKeys();
     if (keys) {
@@ -843,12 +845,18 @@ class GCClient {
     finally { clearInterval(beacon); }
 
     const clientSeed = randomBytes(16).toString("hex");
+    const elapsed = (Date.now() - this._sessionStart) / 1000;
     const client = {
-      steps: 20 + Math.floor(Math.random() * 40),
-      shake: 0.1 + Math.random() * 0.4,
-      motion: "granted",
-      platform: "Android",
+      touchPoints: 5,
       mobile: true,
+      platform: "Linux armv81",
+      screen: [412, 915, 2.63],
+      webgl: "Adreno (TM) 740",
+      webdriver: false,
+      motion: "granted",
+      motionEvents: Math.floor(40 + elapsed * 0.8 + Math.random() * 20),
+      steps: 20 + Math.floor(Math.random() * 40),
+      standalone: true,
     };
 
     await this.flushFixes(3);
@@ -890,6 +898,11 @@ class GCClient {
         await sleep(waitMs);
         if (attempt < 4) continue;
         return { success: false, reason: "rate_limit" };
+      }
+      if (errCode === "motion_required") {
+        log(`[W${this.walletIndex}] motion_required — retry`);
+        if (attempt < 2) { await sleep(800); continue; }
+        return { success: false, reason: "motion" };
       }
       if (errCode === "verification_required") {
         log(`[W${this.walletIndex}] Token ditolak — skip crate ini`);
