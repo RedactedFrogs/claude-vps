@@ -19,6 +19,11 @@ const KEYS_FILE = resolve(__dirname, "gc-keys.json");
 const TUNNEL_URL_FILE = resolve(__dirname, "relay_tunnel_url.txt");
 
 const pending = new Map();
+const STATS_FILE = resolve(__dirname, "gc-stats.json");
+const STATE_FILE = resolve(__dirname, "gc-state.json");
+let tokensSolved = 0;
+let tokensErrors = 0;
+const relayStart = Date.now();
 
 function getSitekey() {
   try {
@@ -185,6 +190,110 @@ boot();
 </script></body></html>`;
 }
 
+function dashboardPage() {
+  return `<!DOCTYPE html>
+<html><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>GC Farm Dashboard</title>
+<style>
+*{box-sizing:border-box;margin:0}
+body{font-family:system-ui,sans-serif;background:#0f172a;color:#e2e8f0;padding:16px}
+h1{color:#34d399;font-size:20px;margin-bottom:12px;display:flex;align-items:center;gap:8px}
+h1 span{font-size:12px;padding:3px 8px;border-radius:12px;font-weight:normal}
+.live{background:#064e3b;color:#34d399}.off{background:#7f1d1d;color:#fca5a5}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px;margin-bottom:16px}
+.card{background:#1e293b;border-radius:10px;padding:14px;text-align:center}
+.card .val{font-size:28px;font-weight:700;color:#f1f5f9}
+.card .lbl{font-size:11px;color:#94a3b8;margin-top:2px;text-transform:uppercase;letter-spacing:.5px}
+.card.green .val{color:#34d399}
+.card.blue .val{color:#60a5fa}
+.card.yellow .val{color:#fbbf24}
+.card.red .val{color:#f87171}
+.card.purple .val{color:#a78bfa}
+.section{background:#1e293b;border-radius:10px;padding:14px;margin-bottom:12px}
+.section h3{font-size:13px;color:#94a3b8;margin-bottom:8px;text-transform:uppercase;letter-spacing:.5px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:#64748b;font-weight:500;padding:4px 8px;border-bottom:1px solid #334155}
+td{padding:6px 8px;border-bottom:1px solid #1e293b}
+.status{display:inline-block;padding:2px 8px;border-radius:8px;font-size:11px;font-weight:600}
+.s-logged_in,.s-farming,.s-walking_to_crate,.s-opening_crate{background:#064e3b;color:#34d399}
+.s-logging_in,.s-idle{background:#1e3a5f;color:#93c5fd}
+.s-break{background:#78350f;color:#fbbf24}
+.s-error,.s-banned,.s-no_crates{background:#7f1d1d;color:#fca5a5}
+.wins{max-height:180px;overflow-y:auto}
+.wins .win{padding:6px 0;border-bottom:1px solid #334155;font-size:13px}
+.wins .reward{color:#fbbf24;font-weight:600}
+.wins .time{color:#64748b;font-size:11px}
+.upd{text-align:center;color:#475569;font-size:11px;margin-top:8px}
+@media(max-width:480px){.grid{grid-template-columns:repeat(2,1fr)}}
+</style></head><body>
+<h1>GoCollect Farm <span id="live" class="off">OFFLINE</span></h1>
+<div class="grid">
+  <div class="card green"><div class="val" id="opened">-</div><div class="lbl">Opened</div></div>
+  <div class="card yellow"><div class="val" id="wins">-</div><div class="lbl">Wins</div></div>
+  <div class="card blue"><div class="val" id="winrate">-</div><div class="lbl">Win Rate</div></div>
+  <div class="card purple"><div class="val" id="tokens">-</div><div class="lbl">Tokens Solved</div></div>
+  <div class="card"><div class="val" id="errors">-</div><div class="lbl">Errors</div></div>
+  <div class="card"><div class="val" id="uptime">-</div><div class="lbl">Uptime</div></div>
+</div>
+<div class="section">
+  <h3>Wallets</h3>
+  <table><thead><tr><th>Wallet</th><th>Status</th><th>Opened</th><th>Wins</th><th>Last Active</th></tr></thead>
+  <tbody id="wallets"><tr><td colspan="5" style="color:#64748b">Waiting...</td></tr></tbody></table>
+</div>
+<div class="section">
+  <h3>Recent Wins</h3>
+  <div class="wins" id="winlist"><div style="color:#64748b">No wins yet</div></div>
+</div>
+<div class="upd">Auto-refresh 5s &mdash; <span id="lastupd">-</span></div>
+<script>
+function fmt(s){
+  if(s<60)return s+"s";
+  const m=Math.floor(s/60),h=Math.floor(m/60);
+  return h>0?h+"j "+m%60+"m":m+"m "+s%60+"s";
+}
+function wib(iso){
+  if(!iso)return"-";
+  return new Date(iso).toLocaleTimeString("id-ID",{timeZone:"Asia/Jakarta",hour:"2-digit",minute:"2-digit"});
+}
+async function refresh(){
+  try{
+    const r=await fetch("/stats");
+    const d=await r.json();
+    const rl=d.relay||{};
+    const today=new Date().toLocaleDateString("sv-SE",{timeZone:"Asia/Jakarta"});
+    const day=d.bot?.days?.[today]||{opened:0,wins:[],errors:0};
+    const ws=d.bot?.wallets||{};
+    const st=d.state;
+    document.getElementById("live").textContent=st?"LIVE":"OFFLINE";
+    document.getElementById("live").className=st?"live":"off";
+    document.getElementById("opened").textContent=day.opened||0;
+    document.getElementById("wins").textContent=(day.wins||[]).length;
+    document.getElementById("winrate").textContent=day.opened>0?((day.wins||[]).length/day.opened*100).toFixed(1)+"%":"0%";
+    document.getElementById("tokens").textContent=rl.tokensSolved||0;
+    document.getElementById("errors").textContent=day.errors||0;
+    document.getElementById("uptime").textContent=fmt(rl.uptime||0);
+    const wArr=st?.wallets||Object.entries(ws).map(([a,w])=>({addr:a.slice(0,10)+"...",status:w.status,...w}));
+    let wh="";
+    if(wArr.length===0)wh='<tr><td colspan="5" style="color:#64748b">No wallets</td></tr>';
+    for(const w of wArr){
+      const cls="s-"+(w.status||"idle").replace(/[^a-z_]/g,"");
+      wh+="<tr><td>"+((w.address||w.addr||"").slice(0,10))+"...</td>";
+      wh+='<td><span class="status '+cls+'">'+(w.status||"idle")+"</span></td>";
+      wh+="<td>"+(w.totalOpened||0)+"</td><td>"+(w.totalWins||0)+"</td>";
+      wh+="<td>"+wib(w.lastActive)+"</td></tr>";
+    }
+    document.getElementById("wallets").innerHTML=wh;
+    const allWins=[...((day.wins||[]).slice().reverse())];
+    if(allWins.length===0){document.getElementById("winlist").innerHTML='<div style="color:#64748b">No wins yet today</div>';}
+    else{let wl="";for(const w of allWins.slice(0,20)){wl+='<div class="win"><span class="reward">'+w.reward+'</span> &mdash; crate '+((w.crateId||"").slice(0,8))+'... <span class="time">'+w.time+" ("+w.wallet+")</span></div>";}document.getElementById("winlist").innerHTML=wl;}
+    document.getElementById("lastupd").textContent=new Date().toLocaleTimeString("id-ID",{timeZone:"Asia/Jakarta"});
+  }catch(e){document.getElementById("live").textContent="ERROR";document.getElementById("live").className="off";}
+}
+refresh();setInterval(refresh,5000);
+</script></body></html>`;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://localhost:${PORT}`);
   res.setHeader("Access-Control-Allow-Origin", "*");
@@ -256,6 +365,7 @@ const server = http.createServer(async (req, res) => {
     if (entry) {
       clearTimeout(entry.timeout);
       pending.delete(body.id);
+      if (body.token) { tokensSolved++; } else { tokensErrors++; }
       entry.resolve(body.token ? { token: body.token } : { error: body.error || "failed" });
       res.writeHead(200, { "Content-Type": "application/json" });
       res.end('{"ok":true}');
@@ -263,6 +373,24 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(404, { "Content-Type": "application/json" });
       res.end('{"error":"expired"}');
     }
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/stats") {
+    let botStats = null, botState = null;
+    try { if (existsSync(STATS_FILE)) botStats = JSON.parse(readFileSync(STATS_FILE, "utf-8")); } catch {}
+    try { if (existsSync(STATE_FILE)) botState = JSON.parse(readFileSync(STATE_FILE, "utf-8")); } catch {}
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify({
+      relay: { uptime: Math.floor((Date.now() - relayStart) / 1000), pending: pending.size, tokensSolved, tokensErrors },
+      bot: botStats, state: botState,
+    }));
+    return;
+  }
+
+  if (req.method === "GET" && url.pathname === "/dashboard") {
+    res.writeHead(200, { "Content-Type": "text/html; charset=utf-8" });
+    res.end(dashboardPage());
     return;
   }
 
