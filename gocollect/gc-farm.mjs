@@ -1054,7 +1054,7 @@ class GCClient {
     }
 
     const MIN_WALK_DIST = 400;
-    const MAX_WALK_DIST = 450;
+    const MAX_WALK_DIST = 500;
     const DAILY_OPEN_LIMIT = 25;
     const MAX_REFETCH = 10;
 
