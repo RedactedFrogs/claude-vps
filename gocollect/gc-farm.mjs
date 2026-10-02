@@ -789,7 +789,11 @@ class GCClient {
       ts: Date.now(),
       source: "gps",
     };
-    return this.apiRequest("POST", "/v1/fixes", fix);
+    const res = await this.apiRequest("POST", "/v1/fixes", fix);
+    if (res.status !== 200 && res.status !== 204) {
+      log(`[W${this.walletIndex}] FIX rejected: ${res.status} ${res.body.slice(0, 200)}`);
+    }
+    return res;
   }
 
   async flushFixes(count = 3) {
