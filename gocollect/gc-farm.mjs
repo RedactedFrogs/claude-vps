@@ -895,7 +895,7 @@ class GCClient {
         log(`[W${this.walletIndex}] Token ditolak — skip crate ini`);
         return { success: false, reason: "expired" };
       }
-      if (errCode === "try_later") { log(`[W${this.walletIndex}] try_later`); return { success: false, reason: "try_later" }; }
+      if (errCode === "try_later") { log(`[W${this.walletIndex}] try_later: ${res.status} ${res.body.slice(0, 300)}`); return { success: false, reason: "try_later" }; }
       if (res.status === 403) { logErr(`[W${this.walletIndex}] 403: ${res.body.slice(0, 200)}`); return { success: false, reason: "forbidden" }; }
       if (res.status === 429) { log(`[W${this.walletIndex}] Rate limited`); return { success: false, reason: "rate_limit" }; }
 
@@ -908,8 +908,11 @@ class GCClient {
   async farmCycle() {
     await this.login();
 
-    await this.flushFixes(3);
-    await sleep(1000 + Math.random() * 2000);
+    log(`[W${this.walletIndex}] Building GPS trail (22s)...`);
+    for (let i = 0; i < 8; i++) {
+      await this.sendLocationFix(this.lat, this.lng);
+      await sleep(2800 + Math.random() * 400);
+    }
 
     const crates = await this.getCrates();
 
