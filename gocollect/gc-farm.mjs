@@ -1053,9 +1053,9 @@ class GCClient {
       await sleep(2800 + Math.random() * 400);
     }
 
-    const MAX_WALK_DIST = 800;
+    const MAX_WALK_DIST = 350;
     const DAILY_OPEN_LIMIT = 25;
-    const MAX_REFETCH = 5;
+    const MAX_REFETCH = 10;
 
     let opened = 0, skipped = 0, wins = 0;
     let cratesThisSession = 0;
