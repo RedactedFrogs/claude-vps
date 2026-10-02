@@ -884,6 +884,10 @@ class GCClient {
         if (attempt < 4) continue;
         return { success: false, reason: "rate_limit" };
       }
+      if (errCode === "verification_required") {
+        log(`[W${this.walletIndex}] Token ditolak — skip crate ini`);
+        return { success: false, reason: "expired" };
+      }
       if (errCode === "try_later") { log(`[W${this.walletIndex}] try_later`); return { success: false, reason: "try_later" }; }
       if (res.status === 403) { logErr(`[W${this.walletIndex}] 403: ${res.body.slice(0, 200)}`); return { success: false, reason: "forbidden" }; }
       if (res.status === 429) { log(`[W${this.walletIndex}] Rate limited`); return { success: false, reason: "rate_limit" }; }
