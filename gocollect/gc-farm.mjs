@@ -1044,108 +1044,135 @@ class GCClient {
       await sleep(2800 + Math.random() * 400);
     }
 
-    const crates = await this.getCrates();
-
-    if (!Array.isArray(crates) || crates.length === 0) {
-      log(`[W${this.walletIndex}] Tidak ada crate`);
-      stats.setWalletStatus(this.address, "no_crates");
-      return { opened: 0, skipped: 0, wins: 0 };
-    }
-
-    crates.sort((a, b) => {
-      const dA = haversine(this.lat, this.lng, a.lat || a.latitude || this.lat, a.lng || a.longitude || this.lng);
-      const dB = haversine(this.lat, this.lng, b.lat || b.latitude || this.lat, b.lng || b.longitude || this.lng);
-      return dA - dB;
-    });
-    log(`[W${this.walletIndex}] Crate terdekat: ${haversine(this.lat, this.lng, crates[0].lat || crates[0].latitude || this.lat, crates[0].lng || crates[0].longitude || this.lng).toFixed(0)}m`);
+    const MAX_WALK_DIST = 800;
+    const DAILY_OPEN_LIMIT = 25;
+    const MAX_REFETCH = 5;
 
     let opened = 0, skipped = 0, wins = 0;
     let cratesThisSession = 0;
     let expiredStreak = 0;
+    let refetchCount = 0;
+    const openedIds = new Set();
 
-    for (let ci = 0; ci < crates.length; ci++) {
-      const crate = crates[ci];
-      const id = crate.id || crate._id || crate.crateId;
-      if (!id) { skipped++; continue; }
+    let crates = await this.getCrates();
 
-      const crateLat = crate.lat || crate.latitude || this.lat;
-      const crateLng = crate.lng || crate.longitude || this.lng;
-      const dist = haversine(this.lat, this.lng, crateLat, crateLng);
-
-      if (dist > 500) {
-        log(`[W${this.walletIndex}] Skip crate ${id.slice(0,8)}... (${dist.toFixed(0)}m — terlalu jauh)`);
-        skipped++; continue;
-      }
-
-      stats.setWalletStatus(this.address, `walking_to_crate`);
-      await this.walkTo(crateLat, crateLng);
-
-      await sleep(300 + Math.random() * 700);
-
-      stats.setWalletStatus(this.address, `opening_crate`);
-      const result = await this.openCrate(id);
-
-      if (result.success) {
-        opened++;
-        expiredStreak = 0;
-        const reward = result.data?.reward || result.data?.item || result.data?.prize || null;
-        const rewardStr = reward ? JSON.stringify(reward) : null;
-        stats.recordOpen(this.address, id, rewardStr);
-
-        if (rewardStr && !result.dryRun) {
-          wins++;
-          await sendTelegram(
-            `<b>WIN!</b> Wallet ${this.address.slice(0, 10)}...\nCrate: ${id}\nReward: ${rewardStr}`
-          );
+    while (refetchCount <= MAX_REFETCH && opened < DAILY_OPEN_LIMIT) {
+      if (!Array.isArray(crates) || crates.length === 0) {
+        if (refetchCount === 0) {
+          log(`[W${this.walletIndex}] Tidak ada crate`);
+          stats.setWalletStatus(this.address, "no_crates");
         }
-      } else if (result.reason === "expired") {
-        expiredStreak++;
-        skipped++;
-        stats.recordSkip(this.address);
-        if (expiredStreak >= 2) {
-          log(`[W${this.walletIndex}] ${expiredStreak}x expired — re-fetch crates`);
-          const fresh = await this.getCrates();
-          if (Array.isArray(fresh) && fresh.length > 0) {
-            fresh.sort((a, b) => {
-              const dA = haversine(this.lat, this.lng, a.lat || a.latitude || this.lat, a.lng || a.longitude || this.lng);
-              const dB = haversine(this.lat, this.lng, b.lat || b.latitude || this.lat, b.lng || b.longitude || this.lng);
-              return dA - dB;
-            });
-            crates.length = 0;
-            crates.push(...fresh);
-            ci = -1;
-            expiredStreak = 0;
-            cratesThisSession = 0;
-          }
-          continue;
-        }
-      } else if (result.reason === "forbidden") {
-        stats.recordError(this.address, "403 forbidden");
-        logErr(`[W${this.walletIndex}] 403 — stop cycle`);
         break;
-      } else if (result.reason === "rate_limit") {
-        log(`[W${this.walletIndex}] Rate limited — tunggu 60s`);
-        await sleep(60000);
-      } else {
-        skipped++;
-        stats.recordSkip(this.address);
       }
 
-      cratesThisSession++;
-      if (cratesThisSession >= CFG.cratesPerSession && ci < crates.length - 1) {
-        const breakMs = (CFG.breakMinMinutes + Math.random() * (CFG.breakMaxMinutes - CFG.breakMinMinutes)) * 60000;
-        log(`[W${this.walletIndex}] Break ${(breakMs / 60000).toFixed(1)} menit (anti-ban pattern)...`);
-        stats.setWalletStatus(this.address, "break");
-        await sleep(breakMs);
-        cratesThisSession = 0;
-      } else {
-        const delay = 2000 + Math.random() * 3000;
-        await sleep(delay);
+      crates = crates.filter(c => !openedIds.has(c.id || c._id || c.crateId));
+
+      crates.sort((a, b) => {
+        const dA = haversine(this.lat, this.lng, a.lat || a.latitude || this.lat, a.lng || a.longitude || this.lng);
+        const dB = haversine(this.lat, this.lng, b.lat || b.latitude || this.lat, b.lng || b.longitude || this.lng);
+        return dA - dB;
+      });
+
+      if (crates.length > 0) {
+        log(`[W${this.walletIndex}] ${crates.length} crates, terdekat: ${haversine(this.lat, this.lng, crates[0].lat || crates[0].latitude || this.lat, crates[0].lng || crates[0].longitude || this.lng).toFixed(0)}m`);
       }
+
+      let openedThisBatch = 0;
+
+      for (let ci = 0; ci < crates.length && opened < DAILY_OPEN_LIMIT; ci++) {
+        const crate = crates[ci];
+        const id = crate.id || crate._id || crate.crateId;
+        if (!id || openedIds.has(id)) { skipped++; continue; }
+
+        const crateLat = crate.lat || crate.latitude || this.lat;
+        const crateLng = crate.lng || crate.longitude || this.lng;
+        const dist = haversine(this.lat, this.lng, crateLat, crateLng);
+
+        if (dist > MAX_WALK_DIST) {
+          log(`[W${this.walletIndex}] Skip crate ${id.slice(0,8)}... (${dist.toFixed(0)}m > ${MAX_WALK_DIST}m)`);
+          skipped++; continue;
+        }
+
+        stats.setWalletStatus(this.address, `walking_to_crate`);
+        await this.walkTo(crateLat, crateLng);
+
+        await sleep(300 + Math.random() * 700);
+
+        stats.setWalletStatus(this.address, `opening_crate`);
+        const result = await this.openCrate(id);
+
+        if (result.success) {
+          opened++;
+          openedThisBatch++;
+          expiredStreak = 0;
+          openedIds.add(id);
+          const reward = result.data?.reward || result.data?.item || result.data?.prize || null;
+          const rewardStr = reward ? JSON.stringify(reward) : null;
+          stats.recordOpen(this.address, id, rewardStr);
+
+          if (rewardStr && !result.dryRun) {
+            wins++;
+            await sendTelegram(
+              `<b>WIN!</b> Wallet ${this.address.slice(0, 10)}...\nCrate: ${id}\nReward: ${rewardStr}`
+            );
+          }
+          log(`[W${this.walletIndex}] Progress: ${opened}/${DAILY_OPEN_LIMIT} hari ini`);
+        } else if (result.reason === "expired") {
+          expiredStreak++;
+          skipped++;
+          openedIds.add(id);
+          stats.recordSkip(this.address);
+          if (expiredStreak >= 2) {
+            log(`[W${this.walletIndex}] ${expiredStreak}x expired — break & re-fetch`);
+            expiredStreak = 0;
+            break;
+          }
+        } else if (result.reason === "forbidden") {
+          stats.recordError(this.address, "403 forbidden");
+          logErr(`[W${this.walletIndex}] 403 — stop cycle`);
+          refetchCount = MAX_REFETCH + 1;
+          break;
+        } else if (result.reason === "rate_limit") {
+          log(`[W${this.walletIndex}] Rate limited — tunggu 60s`);
+          await sleep(60000);
+        } else {
+          skipped++;
+          openedIds.add(id);
+          stats.recordSkip(this.address);
+        }
+
+        cratesThisSession++;
+        if (cratesThisSession >= CFG.cratesPerSession) {
+          const breakMs = (CFG.breakMinMinutes + Math.random() * (CFG.breakMaxMinutes - CFG.breakMinMinutes)) * 60000;
+          log(`[W${this.walletIndex}] Break ${(breakMs / 60000).toFixed(1)} menit (anti-ban)...`);
+          stats.setWalletStatus(this.address, "break");
+          await sleep(breakMs);
+          cratesThisSession = 0;
+        } else {
+          const delay = 2000 + Math.random() * 3000;
+          await sleep(delay);
+        }
+      }
+
+      if (opened >= DAILY_OPEN_LIMIT) {
+        log(`[W${this.walletIndex}] Daily limit ${DAILY_OPEN_LIMIT} tercapai!`);
+        break;
+      }
+
+      if (openedThisBatch === 0 && refetchCount >= MAX_REFETCH) {
+        log(`[W${this.walletIndex}] Tidak ada crate baru setelah ${MAX_REFETCH}x re-fetch`);
+        break;
+      }
+
+      refetchCount++;
+      log(`[W${this.walletIndex}] Re-fetch crates dari posisi (${this.lat.toFixed(4)}, ${this.lng.toFixed(4)}) [re-fetch #${refetchCount}]`);
+      stats.setWalletStatus(this.address, "refetching_crates");
+      await sleep(3000 + Math.random() * 2000);
+      crates = await this.getCrates();
     }
 
     stats.setWalletStatus(this.address, "idle");
-    log(`[W${this.walletIndex}] Cycle done: ${opened} opened, ${skipped} skip, ${wins} wins`);
+    log(`[W${this.walletIndex}] Cycle done: ${opened}/${DAILY_OPEN_LIMIT} opened, ${skipped} skip, ${wins} wins`);
     return { opened, skipped, wins };
   }
 }
