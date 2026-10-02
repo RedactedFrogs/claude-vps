@@ -205,6 +205,77 @@ function computeOpenCdata(bearerToken) {
   return createHash("sha256").update("gc-cdata|" + bearerToken).digest("hex").slice(0, 32);
 }
 
+function yd(v) {
+  return v == null || !Number.isFinite(v) ? null : Math.round(v * 100) / 100;
+}
+
+function generateTiltSamples(params) {
+  const samples = [];
+  const dt = 16.67;
+  const duration = 4000 + Math.random() * 2500;
+  const n = Math.min(Math.floor(duration / dt), 360);
+
+  const sx = params?.start?.x ?? 0.5, sy = params?.start?.y ?? 0.8;
+  const tx = params?.target?.x ?? 0.5, ty = params?.target?.y ?? 0.4;
+  const dx = tx - sx, dy = ty - sy;
+
+  const tgtGamma = Math.max(-28, Math.min(28, dx * 22 + (Math.random() - 0.5) * 3));
+  const tgtBeta = Math.max(-28, Math.min(28, -dy * 18 + (Math.random() - 0.5) * 3));
+  const startAlpha = 120 + Math.random() * 200;
+  const twist = 36 + Math.random() * 8;
+
+  for (let i = 0; i < n; i++) {
+    const t = i * dt;
+    const p = i / n;
+    let beta, gamma, alpha = startAlpha;
+
+    if (p < 0.35) {
+      const e = p / 0.35, s = e * e * (3 - 2 * e);
+      beta = s * tgtBeta + (Math.random() - 0.5) * 1.2;
+      gamma = s * tgtGamma + (Math.random() - 0.5) * 1.2;
+    } else if (p < 0.58) {
+      beta = tgtBeta + (Math.random() - 0.5) * 1.8;
+      gamma = tgtGamma + (Math.random() - 0.5) * 1.8;
+    } else if (p < 0.82) {
+      const tp = (p - 0.58) / 0.24;
+      alpha = startAlpha + tp * twist;
+      beta = tgtBeta + (Math.random() - 0.5) * 2.5;
+      gamma = tgtGamma + (Math.random() - 0.5) * 2.5;
+    } else {
+      alpha = startAlpha + twist + (Math.random() - 0.5) * 3;
+      beta = tgtBeta * 0.4 + (Math.random() - 0.5) * 4;
+      gamma = tgtGamma * 0.4 + (Math.random() - 0.5) * 4;
+    }
+
+    const bRad = beta * Math.PI / 180, gRad = gamma * Math.PI / 180;
+    samples.push({
+      t: Math.round(t * 10) / 10,
+      beta: yd(beta), gamma: yd(gamma), alpha: yd(alpha % 360),
+      rx: yd((Math.random() - 0.5) * 5),
+      ry: yd((Math.random() - 0.5) * 5),
+      rz: yd(p >= 0.58 && p < 0.82 ? 8 + Math.random() * 14 : (Math.random() - 0.5) * 3),
+      ax: yd(Math.sin(gRad) * 9.81 + (Math.random() - 0.5) * 0.4),
+      ay: yd(-Math.sin(bRad) * 9.81 + (Math.random() - 0.5) * 0.4),
+      az: yd(Math.cos(bRad) * Math.cos(gRad) * 9.81 + (Math.random() - 0.5) * 0.25),
+    });
+  }
+  return samples;
+}
+
+function generateRuneTouches(params) {
+  const rune = params?.rune || [];
+  const touches = [];
+  for (let i = 0; i < rune.length; i++) {
+    const pt = rune[i];
+    touches.push({
+      x: yd(pt.x + (Math.random() - 0.5) * 0.04),
+      y: yd(pt.y + (Math.random() - 0.5) * 0.04),
+      t: Math.round((300 + i * (250 + Math.random() * 200)) * 10) / 10,
+    });
+  }
+  return touches;
+}
+
 // ======================== BUNDLE KEY EXTRACTION ========================
 
 async function downloadBundle() {
@@ -835,6 +906,43 @@ class GCClient {
 
     const cData = computeOpenCdata(this.bearer);
 
+    // Step 1: Request open challenge (no turnstile needed)
+    let gameData, gameSkip;
+    try {
+      log(`[W${this.walletIndex}] Challenge...`);
+      const chRes = await this.apiRequest("POST", "/v1/open/challenge", {
+        crateId, motion: true,
+      });
+      if (chRes.status === 200) {
+        const ch = chRes.json();
+        log(`[W${this.walletIndex}] Challenge OK: ${ch.variant} (${(ch.challengeId || "").slice(0, 8)})`);
+        if (ch.variant === "tilt") {
+          gameData = {
+            challengeId: ch.challengeId,
+            variant: "tilt",
+            rules: 2,
+            samples: generateTiltSamples(ch.params || ch),
+          };
+        } else if (ch.variant === "rune") {
+          gameData = {
+            challengeId: ch.challengeId,
+            variant: "rune",
+            rules: 2,
+            touches: generateRuneTouches(ch.params || ch),
+          };
+        } else {
+          gameSkip = "other";
+        }
+      } else {
+        log(`[W${this.walletIndex}] Challenge ${chRes.status}: ${chRes.body.slice(0, 200)}`);
+        gameSkip = "challenge_timeout";
+      }
+    } catch (e) {
+      log(`[W${this.walletIndex}] Challenge error: ${e.message} — gameSkip`);
+      gameSkip = "challenge_timeout";
+    }
+
+    // Step 2: Solve turnstile (GPS beacon continues)
     await this.flushFixes(2);
     const beacon = setInterval(() => {
       this.sendLocationFix(this.lat, this.lng).catch(() => {});
@@ -844,10 +952,12 @@ class GCClient {
     try { token = await solveTurnstile("open", cData); }
     finally { clearInterval(beacon); }
 
+    // Step 3: Build client fingerprint (v3 format)
     const clientSeed = randomBytes(16).toString("hex");
     const elapsed = (Date.now() - this._sessionStart) / 1000;
     const client = {
-      touchPoints: 5,
+      v: 3,
+      touch: 5,
       mobile: true,
       platform: "Linux armv81",
       screen: [412, 915, 2.63],
@@ -861,17 +971,20 @@ class GCClient {
 
     await this.flushFixes(3);
 
+    // Step 4: Open with game/gameSkip
     for (let attempt = 0; attempt < 5; attempt++) {
       if (attempt > 0) {
-        log(`[W${this.walletIndex}] Retry open #${attempt} (stale/short_trail)...`);
+        log(`[W${this.walletIndex}] Retry open #${attempt}...`);
         await sleep(3000);
         await this.flushFixes(4);
       }
 
-      const res = await this.apiRequest("POST", `/v1/crates/${crateId}/open`, {
+      const body = {
         clientSeed, commit: this.roundCommit || "", client,
-      }, { turnstileToken: token });
+        ...(gameData ? { game: gameData } : gameSkip ? { gameSkip } : {}),
+      };
 
+      const res = await this.apiRequest("POST", `/v1/crates/${crateId}/open`, body, { turnstileToken: token });
       const data = res.json();
 
       if (res.status === 200) {
@@ -900,7 +1013,11 @@ class GCClient {
         return { success: false, reason: "rate_limit" };
       }
       if (errCode === "motion_required") {
-        log(`[W${this.walletIndex}] motion_required — retry`);
+        log(`[W${this.walletIndex}] motion_required — ${res.body.slice(0, 200)}`);
+        if (attempt === 0 && !gameData && !gameSkip) {
+          gameSkip = "other";
+          await sleep(800); continue;
+        }
         if (attempt < 2) { await sleep(800); continue; }
         return { success: false, reason: "motion" };
       }
