@@ -9,7 +9,8 @@
 //   node gc-farm.mjs --live --wallet 0      # live 1 wallet (test dulu sebelum scale)
 //   node gc-farm.mjs --live                 # live semua wallet
 //   node gc-farm.mjs --live --loop          # live + ulangi terus (daily loop)
-//   node gc-farm.mjs --manual-captcha --live --wallet 0  # live + manual captcha
+//   node gc-farm.mjs --relay-captcha --live --wallet 0   # live + relay captcha (RECOMMENDED)
+//   node gc-farm.mjs --manual-captcha --live --wallet 0  # live + manual captcha (per-solve link)
 //
 // Config: buat file .env di folder ini (lihat .env.example)
 
@@ -282,6 +283,25 @@ async function captchaBalance() {
 
 let noCaptchaMode = false;
 let browserCaptchaMode = false;
+let relayCaptchaMode = false;
+
+async function solveTurnstileRelay(action, cData) {
+  const relayPort = parseInt(process.env.RELAY_PORT || "18800");
+  log(`[relay] Solve turnstile action=${action}...`);
+  const res = await gcFetch(`http://localhost:${relayPort}/request`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ action, cdata: cData || "", timeout: 120000 }),
+    timeout: 130000,
+    agent: null,
+  });
+  const data = res.json();
+  if (data?.token) {
+    log(`[relay] Token solved (${data.token.length} chars)`);
+    return data.token;
+  }
+  throw new Error(`Relay: ${data?.error || "no token"} — pastikan harvester page terbuka di browser`);
+}
 
 async function solveTurnstileBrowser(action, cData) {
   log(`[browser] Solve turnstile action=${action}...`);
@@ -300,6 +320,7 @@ async function solveTurnstileBrowser(action, cData) {
 
 async function solveTurnstile(action, cData) {
   if (noCaptchaMode) { log(`[no-captcha] Skip turnstile action=${action}`); return ""; }
+  if (relayCaptchaMode) return solveTurnstileRelay(action, cData);
   if (browserCaptchaMode) return solveTurnstileBrowser(action, cData);
   if (manualSolver) return manualSolver.solve(action, cData);
   if (!CFG.captchaKey)
@@ -977,8 +998,9 @@ async function main() {
     console.log("\nContoh:");
     console.log("  node gc-farm.mjs --dry-run --wallet 0           # test 1 wallet");
     console.log("  node gc-farm.mjs --live --wallet 0              # live 1 wallet");
+    console.log("  node gc-farm.mjs --live --relay-captcha         # live + relay (buka harvester di browser)");
     console.log("  node gc-farm.mjs --live --manual-captcha        # live semua + manual captcha");
-    console.log("  node gc-farm.mjs --live --loop --manual-captcha # live loop");
+    console.log("  node gc-farm.mjs --live --loop --relay-captcha  # live loop + relay");
     return;
   }
 
@@ -992,6 +1014,14 @@ async function main() {
     manualSolver = new ManualCaptchaSolver();
     await manualSolver.start();
     log("Mode: MANUAL CAPTCHA");
+  } else if (args.includes("--relay-captcha")) {
+    relayCaptchaMode = true;
+    log("Mode: RELAY CAPTCHA (buka harvester page di browser)");
+    try {
+      const hRes = await gcFetch("http://localhost:" + (process.env.RELAY_PORT || "18800") + "/health", { timeout: 5000, agent: null });
+      if (hRes.status === 200) log("Relay server OK");
+      else log("WARNING: relay server not responding");
+    } catch { log("WARNING: relay server belum jalan — jalankan gc-token-relay.mjs dulu"); }
   }
 
   log(`=== GoCollect Farm ${isDryRun ? "DRY RUN" : "LIVE"} ===`);
