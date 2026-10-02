@@ -514,10 +514,10 @@ function generateWalkPath(fromLat, fromLng, toLat, toLng) {
   const dist = haversine(fromLat, fromLng, toLat, toLng);
   if (dist < 5) return [{ lat: toLat, lng: toLng }];
 
-  const walkSpeed = 1.0 + Math.random() * 0.5;
-  const stepTime = 2.5 + Math.random() * 1.5;
+  const walkSpeed = 2.5 + Math.random() * 1.0;
+  const stepTime = 1.5 + Math.random() * 1.0;
   const stepDist = walkSpeed * stepTime;
-  const numSteps = Math.max(2, Math.ceil(dist / stepDist));
+  const numSteps = Math.min(Math.max(2, Math.ceil(dist / stepDist)), 25);
   const bear = bearing(fromLat, fromLng, toLat, toLng);
 
   const path = [];
@@ -847,26 +847,42 @@ class GCClient {
       return { opened: 0, skipped: 0, wins: 0 };
     }
 
+    crates.sort((a, b) => {
+      const dA = haversine(this.lat, this.lng, a.lat || a.latitude || this.lat, a.lng || a.longitude || this.lng);
+      const dB = haversine(this.lat, this.lng, b.lat || b.latitude || this.lat, b.lng || b.longitude || this.lng);
+      return dA - dB;
+    });
+    log(`[W${this.walletIndex}] Crate terdekat: ${haversine(this.lat, this.lng, crates[0].lat || crates[0].latitude || this.lat, crates[0].lng || crates[0].longitude || this.lng).toFixed(0)}m`);
+
     let opened = 0, skipped = 0, wins = 0;
     let cratesThisSession = 0;
+    let expiredStreak = 0;
 
-    for (const crate of crates) {
+    for (let ci = 0; ci < crates.length; ci++) {
+      const crate = crates[ci];
       const id = crate.id || crate._id || crate.crateId;
       if (!id) { skipped++; continue; }
 
       const crateLat = crate.lat || crate.latitude || this.lat;
       const crateLng = crate.lng || crate.longitude || this.lng;
+      const dist = haversine(this.lat, this.lng, crateLat, crateLng);
+
+      if (dist > 500) {
+        log(`[W${this.walletIndex}] Skip crate ${id.slice(0,8)}... (${dist.toFixed(0)}m — terlalu jauh)`);
+        skipped++; continue;
+      }
 
       stats.setWalletStatus(this.address, `walking_to_crate`);
       await this.walkTo(crateLat, crateLng);
 
-      await sleep(500 + Math.random() * 1500);
+      await sleep(300 + Math.random() * 700);
 
       stats.setWalletStatus(this.address, `opening_crate`);
       const result = await this.openCrate(id);
 
       if (result.success) {
         opened++;
+        expiredStreak = 0;
         const reward = result.data?.reward || result.data?.item || result.data?.prize || null;
         const rewardStr = reward ? JSON.stringify(reward) : null;
         stats.recordOpen(this.address, id, rewardStr);
@@ -876,6 +892,27 @@ class GCClient {
           await sendTelegram(
             `<b>WIN!</b> Wallet ${this.address.slice(0, 10)}...\nCrate: ${id}\nReward: ${rewardStr}`
           );
+        }
+      } else if (result.reason === "expired") {
+        expiredStreak++;
+        skipped++;
+        stats.recordSkip(this.address);
+        if (expiredStreak >= 2) {
+          log(`[W${this.walletIndex}] ${expiredStreak}x expired — re-fetch crates`);
+          const fresh = await this.getCrates();
+          if (Array.isArray(fresh) && fresh.length > 0) {
+            fresh.sort((a, b) => {
+              const dA = haversine(this.lat, this.lng, a.lat || a.latitude || this.lat, a.lng || a.longitude || this.lng);
+              const dB = haversine(this.lat, this.lng, b.lat || b.latitude || this.lat, b.lng || b.longitude || this.lng);
+              return dA - dB;
+            });
+            crates.length = 0;
+            crates.push(...fresh);
+            ci = -1;
+            expiredStreak = 0;
+            cratesThisSession = 0;
+          }
+          continue;
         }
       } else if (result.reason === "forbidden") {
         stats.recordError(this.address, "403 forbidden");
@@ -890,14 +927,14 @@ class GCClient {
       }
 
       cratesThisSession++;
-      if (cratesThisSession >= CFG.cratesPerSession && crates.indexOf(crate) < crates.length - 1) {
+      if (cratesThisSession >= CFG.cratesPerSession && ci < crates.length - 1) {
         const breakMs = (CFG.breakMinMinutes + Math.random() * (CFG.breakMaxMinutes - CFG.breakMinMinutes)) * 60000;
         log(`[W${this.walletIndex}] Break ${(breakMs / 60000).toFixed(1)} menit (anti-ban pattern)...`);
         stats.setWalletStatus(this.address, "break");
         await sleep(breakMs);
         cratesThisSession = 0;
       } else {
-        const delay = 3000 + Math.random() * 5000;
+        const delay = 2000 + Math.random() * 3000;
         await sleep(delay);
       }
     }
