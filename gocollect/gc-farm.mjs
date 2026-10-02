@@ -237,9 +237,9 @@ function extractKeysFromBundle(code) {
   const buildId = buildMatch ? buildMatch[1] : null;
 
   const skMatch =
-    code.match(/sitekey:\s*"(0x[A-Fa-f0-9]{16,})"/) ||
-    code.match(/siteKey:\s*"(0x[A-Fa-f0-9]{16,})"/) ||
-    code.match(/"(0x4AAAAAAA[A-Fa-f0-9]{14,})"/);
+    code.match(/sitekey:\s*"(0x[A-Za-z0-9]{16,})"/) ||
+    code.match(/siteKey:\s*"(0x[A-Za-z0-9]{16,})"/) ||
+    code.match(/"(0x4AAAAAA[A-Za-z0-9]{14,})"/);
   const sitekey = skMatch ? skMatch[1] : null;
 
   return { j3, k3, buildId, sitekey };
@@ -737,11 +737,13 @@ class GCClient {
     }
 
     const nonce = challenge.nonce;
-    const signature = solanaSign(nonce, this.keypair);
+    const issuedAt = new Date().toISOString();
+    const siwsMsg = `gocollect.fun wants you to sign a message:\n${this.address}\n\nSign in to GoCollect\n\nURI: https://gocollect.fun\nVersion: 1\nChain ID: mainnet\nNonce: ${nonce}\nIssued At: ${issuedAt}`;
+    const signature = solanaSign(siwsMsg, this.keypair);
     const token = await solveTurnstile("signin", nonce);
 
     const loginRes = await this.apiRequest("POST", "/v1/auth/wallet", {
-      address: this.address, signature, nonce,
+      message: siwsMsg, address: this.address, signature, nonce,
     }, { turnstileToken: token });
 
     const loginData = loginRes.json();
