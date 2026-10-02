@@ -791,7 +791,10 @@ class GCClient {
     };
     const res = await this.apiRequest("POST", "/v1/fixes", fix);
     if (res.status !== 200 && res.status !== 204) {
-      log(`[W${this.walletIndex}] FIX rejected: ${res.status} ${res.body.slice(0, 200)}`);
+      log(`[W${this.walletIndex}] FIX rejected: ${res.status} ${res.body.slice(0, 300)}`);
+    } else if (!this._fixLogged) {
+      log(`[W${this.walletIndex}] FIX OK: ${res.status} ${res.body.slice(0, 300)}`);
+      this._fixLogged = true;
     }
     return res;
   }
@@ -871,7 +874,7 @@ class GCClient {
 
       const errCode = data?.error?.code || data?.error;
       if (errCode === "stale" || errCode === "short_trail") {
-        log(`[W${this.walletIndex}] ${errCode} — kirim fix baru...`);
+        log(`[W${this.walletIndex}] ${errCode} — ${res.body.slice(0, 300)}`);
         if (attempt < 4) continue;
         return { success: false, reason: "stale" };
       }
