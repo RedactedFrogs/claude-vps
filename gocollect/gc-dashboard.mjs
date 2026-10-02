@@ -46,9 +46,10 @@ function renderPage() {
   const state = readJson(STATE_FILE);
   const statsData = readJson(STATS_FILE);
 
-  const daily = state?.daily || {};
+  const today = new Date().toLocaleDateString("sv-SE", { timeZone: "Asia/Jakarta" });
+  const daily = statsData?.days?.[today] || {};
   const wallets = state?.wallets || [];
-  const updatedAt = formatWIB(state?.updatedAt);
+  const updatedAt = formatWIB(statsData?.wallets ? Object.values(statsData.wallets).reduce((a, w) => w.lastActive > a ? w.lastActive : a, "") : state?.updatedAt);
   const botStatus = getBotStatus();
   const logLines = tailLog(25);
 
@@ -59,6 +60,9 @@ function renderPage() {
   const statusDot = botStatus === "running" ? "🟢" : botStatus === "selesai" ? "🔵" : "🔴";
   const statusText = botStatus === "running" ? "Bot Jalan" : botStatus === "selesai" ? "Cycle Selesai" : "Bot Mati";
 
+  const winCount = daily.wins?.length || 0;
+  const winRate = opened > 0 ? ((winCount / opened) * 100).toFixed(1) : "0";
+
   let winsHtml = "";
   if (daily.wins && daily.wins.length > 0) {
     winsHtml = daily.wins.map(w =>
@@ -68,21 +72,17 @@ function renderPage() {
     winsHtml = `<tr><td colspan="4" class="empty">Belum ada win hari ini</td></tr>`;
   }
 
-  let walletsHtml = wallets.map(w => {
-    const sc = w.status === "done" ? "#10b981" : w.status === "error" ? "#ef4444" :
-      ["walking_to_crate","opening_crate","refetching_crates"].includes(w.status) ? "#34d399" : "#f59e0b";
-    const label = {walking_to_crate:"jalan...",opening_crate:"buka...",refetching_crates:"fetch...",break:"istirahat",idle:"idle",done:"selesai",error:"error"}[w.status] || w.status;
-    return `<tr><td>#${w.index}</td><td>${esc(w.addr)}</td><td><span style="color:${sc}">${label}</span></td><td>${w.opened ?? "-"}</td><td>${w.wins ?? "-"}</td></tr>`;
-  }).join("");
-  if (!walletsHtml) walletsHtml = `<tr><td colspan="5" class="empty">Bot belum jalan</td></tr>`;
-
-  let walletStatsHtml = "";
+  let walletsHtml = "";
   if (statsData?.wallets) {
-    walletStatsHtml = Object.entries(statsData.wallets).map(([addr, w]) => {
-      return `<tr><td>${esc(addr.slice(0,10))}...</td><td>${w.totalOpened||0}</td><td>${w.totalWins||0}</td><td>${formatWIB(w.lastActive)}</td></tr>`;
+    walletsHtml = Object.entries(statsData.wallets).map(([addr, w], i) => {
+      const st = w.status || "idle";
+      const sc = st === "done" || st === "idle" ? "#10b981" : st === "error" || st === "banned" ? "#ef4444" :
+        ["walking_to_crate","opening_crate","refetching_crates"].includes(st) ? "#34d399" : "#f59e0b";
+      const label = {walking_to_crate:"jalan...",opening_crate:"buka...",refetching_crates:"fetch...",break:"istirahat",idle:"idle",done:"selesai",error:"error",logged_in:"login OK",logging_in:"login..."}[st] || st;
+      return `<tr><td>#${i}</td><td>${esc(addr.slice(0,10))}</td><td><span style="color:${sc}">${label}</span></td><td>${w.totalOpened||0}</td><td>${w.totalWins||0}</td></tr>`;
     }).join("");
   }
-  if (!walletStatsHtml) walletStatsHtml = `<tr><td colspan="4" class="empty">-</td></tr>`;
+  if (!walletsHtml) walletsHtml = `<tr><td colspan="5" class="empty">Bot belum jalan</td></tr>`;
 
   let historyHtml = "";
   if (statsData?.days) {
@@ -136,21 +136,15 @@ td{padding:6px;border-bottom:1px solid #1e293b}
 
 <div class="cards">
   <div class="card"><div class="val">${opened}</div><div class="lbl">Opened</div></div>
-  <div class="card"><div class="val">${daily.winCount || daily.wins?.length || 0}</div><div class="lbl">Wins</div></div>
-  <div class="card"><div class="val">${daily.winRate || "0"}%</div><div class="lbl">Win Rate</div></div>
+  <div class="card"><div class="val">${winCount}</div><div class="lbl">Wins</div></div>
+  <div class="card"><div class="val">${winRate}%</div><div class="lbl">Win Rate</div></div>
   <div class="card"><div class="val">${daily.errors || 0}</div><div class="lbl">Errors</div></div>
 </div>
 
-<h2>Wallet (cycle terakhir)</h2>
+<h2>Wallet</h2>
 <table>
-<tr><th>#</th><th>Address</th><th>Status</th><th>Open</th><th>Win</th></tr>
+<tr><th>#</th><th>Address</th><th>Status</th><th>Total Open</th><th>Total Win</th></tr>
 ${walletsHtml}
-</table>
-
-<h2>Wallet Stats (all-time)</h2>
-<table>
-<tr><th>Address</th><th>Total Open</th><th>Total Win</th><th>Terakhir Aktif</th></tr>
-${walletStatsHtml}
 </table>
 
 <h2>Wins Hari Ini</h2>
