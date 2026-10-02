@@ -771,7 +771,8 @@ class GCClient {
     if (res.status !== 200) throw new Error(`Crates gagal: ${res.status} ${res.body}`);
 
     const crates = data?.crates || data || [];
-    log(`[W${this.walletIndex}] ${Array.isArray(crates) ? crates.length : "?"} crates ditemukan`);
+    this.roundCommit = data?.commit || null;
+    log(`[W${this.walletIndex}] ${Array.isArray(crates) ? crates.length : "?"} crates ditemukan${this.roundCommit ? " (commit: " + this.roundCommit.slice(0, 8) + "...)" : ""}`);
     return crates;
   }
 
@@ -808,11 +809,12 @@ class GCClient {
 
     const cData = computeOpenCdata(this.bearer);
     const token = await solveTurnstile("open", cData);
+    const clientSeed = randomBytes(16).toString("hex");
 
     await this.sendLocationFix(this.lat, this.lng);
 
     const res = await this.apiRequest("POST", `/v1/crates/${crateId}/open`, {
-      lat: this.lat, lng: this.lng,
+      clientSeed, commit: this.roundCommit || "",
     }, { turnstileToken: token });
 
     const data = res.json();
