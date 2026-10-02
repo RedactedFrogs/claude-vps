@@ -585,11 +585,10 @@ function generateWalkPath(fromLat, fromLng, toLat, toLng) {
   const dist = haversine(fromLat, fromLng, toLat, toLng);
   if (dist < 5) return [{ lat: toLat, lng: toLng }];
 
-  const walkSpeed = 2.5 + Math.random() * 1.0;
-  const stepTime = 1.5 + Math.random() * 1.0;
+  const walkSpeed = 1.2 + Math.random() * 0.6;
+  const stepTime = 2.5 + Math.random() * 1.5;
   const stepDist = walkSpeed * stepTime;
-  const numSteps = Math.min(Math.max(2, Math.ceil(dist / stepDist)), 25);
-  const bear = bearing(fromLat, fromLng, toLat, toLng);
+  const numSteps = Math.max(3, Math.ceil(dist / stepDist));
 
   const path = [];
   for (let i = 1; i <= numSteps; i++) {
@@ -1025,6 +1024,16 @@ class GCClient {
         log(`[W${this.walletIndex}] Token ditolak — skip crate ini`);
         return { success: false, reason: "expired" };
       }
+      if (errCode === "moving_fast") {
+        const waitMs = data?.error?.readyInMs || 300000;
+        log(`[W${this.walletIndex}] moving_fast — tunggu ${(waitMs/1000).toFixed(0)}s lalu kirim GPS diam...`);
+        for (let w = 0; w < Math.ceil(waitMs / 10000); w++) {
+          await sleep(10000);
+          await this.sendLocationFix(this.lat, this.lng);
+        }
+        if (attempt < 4) continue;
+        return { success: false, reason: "moving_fast" };
+      }
       if (errCode === "try_later") { log(`[W${this.walletIndex}] try_later: ${res.status} ${res.body.slice(0, 300)}`); return { success: false, reason: "try_later" }; }
       if (res.status === 403) { logErr(`[W${this.walletIndex}] 403: ${res.body.slice(0, 200)}`); return { success: false, reason: "forbidden" }; }
       if (res.status === 429) { log(`[W${this.walletIndex}] Rate limited`); return { success: false, reason: "rate_limit" }; }
@@ -1130,6 +1139,8 @@ class GCClient {
             expiredStreak = 0;
             break;
           }
+        } else if (result.reason === "moving_fast") {
+          log(`[W${this.walletIndex}] moving_fast resolved — lanjut`);
         } else if (result.reason === "forbidden") {
           stats.recordError(this.address, "403 forbidden");
           logErr(`[W${this.walletIndex}] 403 — stop cycle`);
