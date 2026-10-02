@@ -1053,7 +1053,8 @@ class GCClient {
       await sleep(2800 + Math.random() * 400);
     }
 
-    const MAX_WALK_DIST = 350;
+    const MIN_WALK_DIST = 400;
+    const MAX_WALK_DIST = 500;
     const DAILY_OPEN_LIMIT = 25;
     const MAX_REFETCH = 10;
 
@@ -1083,7 +1084,11 @@ class GCClient {
       });
 
       if (crates.length > 0) {
-        log(`[W${this.walletIndex}] ${crates.length} crates, terdekat: ${haversine(this.lat, this.lng, crates[0].lat || crates[0].latitude || this.lat, crates[0].lng || crates[0].longitude || this.lng).toFixed(0)}m`);
+        const inRange = crates.filter(c => {
+          const d = haversine(this.lat, this.lng, c.lat || c.latitude || this.lat, c.lng || c.longitude || this.lng);
+          return d >= MIN_WALK_DIST && d <= MAX_WALK_DIST;
+        });
+        log(`[W${this.walletIndex}] ${crates.length} crates total, ${inRange.length} dalam jarak ${MIN_WALK_DIST}-${MAX_WALK_DIST}m`);
       }
 
       let openedThisBatch = 0;
@@ -1097,8 +1102,7 @@ class GCClient {
         const crateLng = crate.lng || crate.longitude || this.lng;
         const dist = haversine(this.lat, this.lng, crateLat, crateLng);
 
-        if (dist > MAX_WALK_DIST) {
-          log(`[W${this.walletIndex}] Skip crate ${id.slice(0,8)}... (${dist.toFixed(0)}m > ${MAX_WALK_DIST}m)`);
+        if (dist < MIN_WALK_DIST || dist > MAX_WALK_DIST) {
           skipped++; continue;
         }
 
