@@ -1054,7 +1054,7 @@ class GCClient {
     }
 
     const MIN_WALK_DIST = 400;
-    const MAX_WALK_DIST = 500;
+    const MAX_WALK_DIST = 450;
     const DAILY_OPEN_LIMIT = 25;
     const MAX_REFETCH = 10;
 
@@ -1092,6 +1092,12 @@ class GCClient {
       }
 
       let openedThisBatch = 0;
+
+      crates.sort((a, b) => {
+        const dA = haversine(this.lat, this.lng, a.lat || a.latitude || this.lat, a.lng || a.longitude || this.lng);
+        const dB = haversine(this.lat, this.lng, b.lat || b.latitude || this.lat, b.lng || b.longitude || this.lng);
+        return dA - dB;
+      });
 
       for (let ci = 0; ci < crates.length && opened < DAILY_OPEN_LIMIT; ci++) {
         const crate = crates[ci];
