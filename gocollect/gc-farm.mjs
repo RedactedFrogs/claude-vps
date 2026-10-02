@@ -808,29 +808,55 @@ class GCClient {
     }
 
     const cData = computeOpenCdata(this.bearer);
-    const token = await solveTurnstile("open", cData);
-    const clientSeed = randomBytes(16).toString("hex");
 
     await this.sendLocationFix(this.lat, this.lng);
+    const beacon = setInterval(() => {
+      this.sendLocationFix(this.lat, this.lng).catch(() => {});
+    }, 5000);
 
-    const res = await this.apiRequest("POST", `/v1/crates/${crateId}/open`, {
-      clientSeed, commit: this.roundCommit || "",
-    }, { turnstileToken: token });
+    let token;
+    try { token = await solveTurnstile("open", cData); }
+    finally { clearInterval(beacon); }
 
-    const data = res.json();
+    const clientSeed = randomBytes(16).toString("hex");
+    await this.sendLocationFix(this.lat, this.lng);
+    await sleep(300);
 
-    if (res.status === 200) {
-      log(`[W${this.walletIndex}] CRATE OPENED! ${JSON.stringify(data)}`);
-      return { success: true, data };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) {
+        log(`[W${this.walletIndex}] Retry open (stale fix)...`);
+        for (let f = 0; f < 3; f++) {
+          await this.sendLocationFix(this.lat, this.lng);
+          await sleep(2000);
+        }
+      }
+
+      const res = await this.apiRequest("POST", `/v1/crates/${crateId}/open`, {
+        clientSeed, commit: this.roundCommit || "",
+      }, { turnstileToken: token });
+
+      const data = res.json();
+
+      if (res.status === 200) {
+        log(`[W${this.walletIndex}] CRATE OPENED! ${JSON.stringify(data)}`);
+        return { success: true, data };
+      }
+      if (res.status === 410) { log(`[W${this.walletIndex}] Crate expired`); return { success: false, reason: "expired" }; }
+
+      const errCode = data?.error?.code || data?.error;
+      if (errCode === "stale") {
+        log(`[W${this.walletIndex}] Location stale — kirim fix baru...`);
+        if (attempt < 2) continue;
+        return { success: false, reason: "stale" };
+      }
+      if (errCode === "try_later") { log(`[W${this.walletIndex}] try_later`); return { success: false, reason: "try_later" }; }
+      if (res.status === 403) { logErr(`[W${this.walletIndex}] 403: ${res.body.slice(0, 200)}`); return { success: false, reason: "forbidden" }; }
+      if (res.status === 429) { log(`[W${this.walletIndex}] Rate limited`); return { success: false, reason: "rate_limit" }; }
+
+      logErr(`[W${this.walletIndex}] Open gagal: ${res.status} ${res.body.slice(0, 200)}`);
+      return { success: false, reason: "unknown" };
     }
-    if (res.status === 410) { log(`[W${this.walletIndex}] Crate expired`); return { success: false, reason: "expired" }; }
-    if (data?.error === "try_later") { log(`[W${this.walletIndex}] try_later`); return { success: false, reason: "try_later" }; }
-    if (data?.error === "stale") { logErr(`[W${this.walletIndex}] FIX BASI`); return { success: false, reason: "stale" }; }
-    if (res.status === 403) { logErr(`[W${this.walletIndex}] 403: ${res.body.slice(0, 200)}`); return { success: false, reason: "forbidden" }; }
-    if (res.status === 429) { log(`[W${this.walletIndex}] Rate limited`); return { success: false, reason: "rate_limit" }; }
-
-    logErr(`[W${this.walletIndex}] Open gagal: ${res.status} ${res.body.slice(0, 200)}`);
-    return { success: false, reason: "unknown" };
+    return { success: false, reason: "stale" };
   }
 
   async farmCycle() {
