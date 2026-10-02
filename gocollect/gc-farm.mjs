@@ -1057,12 +1057,10 @@ class GCClient {
     const DAILY_OPEN_LIMIT = 25;
     const MAX_REFETCH = 5;
 
-    const OPEN_GAP_MS = 460000;
     let opened = 0, skipped = 0, wins = 0;
     let cratesThisSession = 0;
     let expiredStreak = 0;
     let refetchCount = 0;
-    let lastOpenTime = 0;
     const openedIds = new Set();
 
     let crates = await this.getCrates();
@@ -1119,7 +1117,6 @@ class GCClient {
           opened++;
           openedThisBatch++;
           expiredStreak = 0;
-          lastOpenTime = Date.now();
           openedIds.add(id);
           const reward = result.data?.reward || result.data?.item || result.data?.prize || null;
           const rewardStr = reward ? JSON.stringify(reward) : null;
@@ -1164,19 +1161,7 @@ class GCClient {
           log(`[W${this.walletIndex}] Break ${(breakMs / 60000).toFixed(1)} menit (anti-ban)...`);
           stats.setWalletStatus(this.address, "break");
           await sleep(breakMs);
-          lastOpenTime = 0;
           cratesThisSession = 0;
-        } else if (lastOpenTime > 0) {
-          const elapsed = Date.now() - lastOpenTime;
-          const jitter = (Math.random() - 0.5) * 60000;
-          const remaining = OPEN_GAP_MS + jitter - elapsed;
-          if (remaining > 0) {
-            log(`[W${this.walletIndex}] Cooldown ${(remaining/1000).toFixed(0)}s (gap ~460s)...`);
-            stats.setWalletStatus(this.address, "cooldown");
-            const beacon = setInterval(() => { this.sendLocationFix(this.lat, this.lng).catch(() => {}); }, 15000);
-            await sleep(remaining);
-            clearInterval(beacon);
-          }
         }
       }
 
