@@ -737,13 +737,16 @@ class GCClient {
     }
 
     const nonce = challenge.nonce;
-    const issuedAt = new Date().toISOString();
-    const siwsMsg = `gocollect.fun wants you to sign a message:\n${this.address}\n\nSign in to GoCollect\n\nURI: https://gocollect.fun\nVersion: 1\nChain ID: mainnet\nNonce: ${nonce}\nIssued At: ${issuedAt}`;
-    const signature = solanaSign(siwsMsg, this.keypair);
+    const serverMsg = challenge.message;
+    if (!serverMsg) {
+      throw new Error(`Challenge missing 'message': ${JSON.stringify(challenge).slice(0, 200)}`);
+    }
+    log(`[W${this.walletIndex}] Signing server message (${serverMsg.length} chars)`);
+    const signature = solanaSign(serverMsg, this.keypair);
     const token = await solveTurnstile("signin", nonce);
 
     const loginRes = await this.apiRequest("POST", "/v1/auth/wallet", {
-      message: siwsMsg, address: this.address, signature, nonce,
+      address: this.address, nonce, signature,
     }, { turnstileToken: token });
 
     const loginData = loginRes.json();
