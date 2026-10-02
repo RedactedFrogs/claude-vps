@@ -31,12 +31,9 @@ function tailLog(n = 20) {
 
 function getBotStatus() {
   try {
-    const out = execSync("systemctl is-active gc-farm 2>/dev/null", { encoding: "utf-8", timeout: 3000 }).trim();
-    if (out === "active") {
-      const sub = execSync("systemctl show gc-farm --property=SubState --value 2>/dev/null", { encoding: "utf-8", timeout: 3000 }).trim();
-      return sub === "running" ? "running" : sub === "exited" ? "selesai" : sub;
-    }
-    return out;
+    const out = execSync("pgrep -f 'node.*gc-farm' 2>/dev/null", { encoding: "utf-8", timeout: 3000 }).trim();
+    if (out) return "running";
+    return "stopped";
   } catch { return "stopped"; }
 }
 
