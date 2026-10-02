@@ -98,7 +98,7 @@ function updateUptime(){
 }
 setInterval(updateUptime,1000);
 
-async function solveTurnstile(action,cdata){
+async function solveTurnstileOnce(action,cdata){
   const el=document.getElementById("widget");
   el.innerHTML="";
   const container=document.createElement("div");
@@ -106,7 +106,7 @@ async function solveTurnstile(action,cdata){
   let wid;
   try{
     return await new Promise(resolve=>{
-      const to=setTimeout(()=>resolve({error:"timeout"}),25000);
+      const to=setTimeout(()=>resolve({error:"timeout"}),30000);
       const done=r=>{clearTimeout(to);resolve(r)};
       wid=window.turnstile.render(container,{
         sitekey:SK,
@@ -123,6 +123,16 @@ async function solveTurnstile(action,cdata){
     });
   }catch(e){return{error:"render:"+e.message.slice(0,30)}}
   finally{try{if(wid!==undefined)window.turnstile.remove(wid)}catch{};el.innerHTML=""}
+}
+
+async function solveTurnstile(action,cdata){
+  for(let i=1;i<=3;i++){
+    const r=await solveTurnstileOnce(action,cdata);
+    if(r.token)return r;
+    addLog("Retry "+i+"/3: "+r.error);
+    if(i<3)await new Promise(r=>setTimeout(r,2000));
+  }
+  return{error:"failed_3_retries"};
 }
 
 async function loop(){
@@ -164,25 +174,29 @@ function boot(){
 // Generate fallback console script
 document.getElementById("fb-script").textContent=
   '(async()=>{const R="'+RELAY+'",SK="'+SK+'";'
-  +'if(!window.turnstile){const s=document.createElement("script");'
-  +'s.src="https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit";'
-  +'document.head.appendChild(s);await new Promise(r=>{const i=setInterval(()=>{if(window.turnstile){clearInterval(i);r()}},200)})}'
-  +'console.log("[harvester] Active on "+location.hostname);'
-  +'while(true){try{const p=await(await fetch(R+"/pending")).json();'
-  +'for(const q of p){console.log("[harvester] Solving:",q.action);'
+  +'async function solve(action,cdata){'
+  +'for(let i=1;i<=3;i++){'
   +'const el=document.createElement("div");el.style.cssText="position:fixed;bottom:0;left:50%;transform:translateX(-50%);z-index:99999";'
   +'document.body.appendChild(el);let w;'
-  +'const r=await new Promise(ok=>{const t=setTimeout(()=>ok({error:"timeout"}),25e3);'
-  +'w=turnstile.render(el,{sitekey:SK,...(q.cdata?{cData:q.cdata}:{}),action:q.action,'
+  +'try{const r=await new Promise(ok=>{const t=setTimeout(()=>ok({error:"timeout"}),30e3);'
+  +'w=turnstile.render(el,{sitekey:SK,...(cdata?{cData:cdata}:{}),action,'
   +'appearance:"interaction-only",execution:"execute",'
   +'callback:v=>{clearTimeout(t);ok({token:v})},'
   +'"error-callback":e=>{clearTimeout(t);ok({error:String(e)});return true},'
   +'"timeout-callback":()=>{clearTimeout(t);ok({error:"timeout"})}});'
   +'turnstile.execute(w)});'
-  +'try{if(w!==undefined)turnstile.remove(w)}catch{};el.remove();'
+  +'if(r.token)return r;console.log("[harvester] retry "+i+"/3: "+r.error);'
+  +'}catch(e){console.log("[harvester] retry "+i+"/3: "+e.message)}'
+  +'finally{try{if(w!==undefined)turnstile.remove(w)}catch{};el.remove()}'
+  +'if(i<3)await new Promise(r=>setTimeout(r,2e3))}'
+  +'return{error:"failed_3_retries"}}'
+  +'console.log("[harvester] Active on "+location.hostname);'
+  +'while(true){try{const p=await(await fetch(R+"/pending")).json();'
+  +'for(const q of p){console.log("[harvester] Solving:",q.action);'
+  +'const r=await solve(q.action,q.cdata);'
   +'await fetch(R+"/fulfill",{method:"POST",headers:{"Content-Type":"application/json"},'
   +'body:JSON.stringify({id:q.id,...(r.token?{token:r.token}:{error:r.error})})});'
-  +'console.log("[harvester]",r.token?"OK":"ERR:"+r.error)}'
+  +'console.log("[harvester]",r.token?"OK "+r.token.length+"ch":"ERR:"+r.error)}'
   +'}catch(e){}await new Promise(r=>setTimeout(r,2e3))}})()';
 
 addLog("Loading Turnstile...");
