@@ -1096,7 +1096,10 @@ class GCClient {
         stats.setWalletStatus(this.address, `walking_to_crate`);
         await this.walkTo(crateLat, crateLng);
 
-        await sleep(300 + Math.random() * 700);
+        const dwellMs = 2000 + Math.random() * 5000;
+        log(`[W${this.walletIndex}] Dwell ${(dwellMs/1000).toFixed(1)}s...`);
+        await sleep(dwellMs);
+        await this.sendLocationFix(this.lat, this.lng);
 
         stats.setWalletStatus(this.address, `opening_crate`);
         const result = await this.openCrate(id);
@@ -1149,7 +1152,7 @@ class GCClient {
           await sleep(breakMs);
           cratesThisSession = 0;
         } else {
-          const delay = 2000 + Math.random() * 3000;
+          const delay = 5000 + Math.random() * 10000;
           await sleep(delay);
         }
       }
