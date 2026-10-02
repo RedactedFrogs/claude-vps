@@ -777,11 +777,26 @@ class GCClient {
   }
 
   async sendLocationFix(lat, lng, accuracy) {
-    return this.apiRequest("POST", "/v1/location/fix", {
+    const fix = {
       lat, lng,
       accuracy: accuracy || 10 + Math.random() * 5,
-      timestamp: Date.now(),
-    });
+      speed: 0.5 + Math.random() * 1.5,
+      altitude: 15 + Math.random() * 10,
+      altitudeAccuracy: 3 + Math.random() * 5,
+      heading: Math.random() * 360,
+      steps: Math.floor(Math.random() * 5),
+      shake: Math.random() * 0.3,
+      ts: Date.now(),
+      source: "gps",
+    };
+    return this.apiRequest("POST", "/v1/fixes", fix);
+  }
+
+  async flushFixes(count = 3) {
+    for (let i = 0; i < count; i++) {
+      await this.sendLocationFix(this.lat, this.lng);
+      if (i < count - 1) await sleep(1000);
+    }
   }
 
   async walkTo(targetLat, targetLng) {
@@ -789,11 +804,13 @@ class GCClient {
     const dist = haversine(this.lat, this.lng, targetLat, targetLng);
     log(`[W${this.walletIndex}] Jalan ke crate (${dist.toFixed(0)}m, ${path.length} steps)...`);
 
+    const walkBearing = bearing(this.lat, this.lng, targetLat, targetLng) * (180 / Math.PI);
     for (const step of path) {
+      const spd = 1.5 + Math.random() * 1.5;
       await this.sendLocationFix(step.lat, step.lng, step.accuracy);
       this.lat = step.lat;
       this.lng = step.lng;
-      await sleep(step.delayMs || 2500);
+      await sleep(step.delayMs || 2000);
     }
 
     log(`[W${this.walletIndex}] Sampai di (${this.lat.toFixed(6)}, ${this.lng.toFixed(6)})`);
@@ -809,30 +826,35 @@ class GCClient {
 
     const cData = computeOpenCdata(this.bearer);
 
-    await this.sendLocationFix(this.lat, this.lng);
+    await this.flushFixes(2);
     const beacon = setInterval(() => {
       this.sendLocationFix(this.lat, this.lng).catch(() => {});
-    }, 5000);
+    }, 3000);
 
     let token;
     try { token = await solveTurnstile("open", cData); }
     finally { clearInterval(beacon); }
 
     const clientSeed = randomBytes(16).toString("hex");
-    await this.sendLocationFix(this.lat, this.lng);
-    await sleep(300);
+    const client = {
+      steps: 20 + Math.floor(Math.random() * 40),
+      shake: 0.1 + Math.random() * 0.4,
+      motion: "granted",
+      platform: "Android",
+      mobile: true,
+    };
 
-    for (let attempt = 0; attempt < 3; attempt++) {
+    await this.flushFixes(3);
+
+    for (let attempt = 0; attempt < 5; attempt++) {
       if (attempt > 0) {
-        log(`[W${this.walletIndex}] Retry open (stale fix)...`);
-        for (let f = 0; f < 3; f++) {
-          await this.sendLocationFix(this.lat, this.lng);
-          await sleep(2000);
-        }
+        log(`[W${this.walletIndex}] Retry open #${attempt} (stale/short_trail)...`);
+        await sleep(3000);
+        await this.flushFixes(4);
       }
 
       const res = await this.apiRequest("POST", `/v1/crates/${crateId}/open`, {
-        clientSeed, commit: this.roundCommit || "",
+        clientSeed, commit: this.roundCommit || "", client,
       }, { turnstileToken: token });
 
       const data = res.json();
@@ -844,10 +866,23 @@ class GCClient {
       if (res.status === 410) { log(`[W${this.walletIndex}] Crate expired`); return { success: false, reason: "expired" }; }
 
       const errCode = data?.error?.code || data?.error;
-      if (errCode === "stale") {
-        log(`[W${this.walletIndex}] Location stale — kirim fix baru...`);
-        if (attempt < 2) continue;
+      if (errCode === "stale" || errCode === "short_trail") {
+        log(`[W${this.walletIndex}] ${errCode} — kirim fix baru...`);
+        if (attempt < 4) continue;
         return { success: false, reason: "stale" };
+      }
+      if (errCode === "round_changed") {
+        log(`[W${this.walletIndex}] Round berubah — re-fetch crates`);
+        await this.getCrates();
+        if (attempt < 4) continue;
+        return { success: false, reason: "expired" };
+      }
+      if (errCode === "too_fast") {
+        const waitMs = data?.error?.extra?.readyInMs || 10000;
+        log(`[W${this.walletIndex}] too_fast — tunggu ${(waitMs/1000).toFixed(0)}s`);
+        await sleep(waitMs);
+        if (attempt < 4) continue;
+        return { success: false, reason: "rate_limit" };
       }
       if (errCode === "try_later") { log(`[W${this.walletIndex}] try_later`); return { success: false, reason: "try_later" }; }
       if (res.status === 403) { logErr(`[W${this.walletIndex}] 403: ${res.body.slice(0, 200)}`); return { success: false, reason: "forbidden" }; }
@@ -862,7 +897,7 @@ class GCClient {
   async farmCycle() {
     await this.login();
 
-    await this.sendLocationFix(this.lat, this.lng);
+    await this.flushFixes(3);
     await sleep(1000 + Math.random() * 2000);
 
     const crates = await this.getCrates();
