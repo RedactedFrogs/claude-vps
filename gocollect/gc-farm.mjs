@@ -874,7 +874,13 @@ class GCClient {
       source: "gps",
     };
     const res = await this.apiRequest("POST", "/v1/fixes", [fix]);
-    if (res.status !== 200 && res.status !== 204) {
+    if (res.status === 503) {
+      const d = res.json();
+      const waitMs = d?.error?.readyInMs || 15000;
+      log(`[W${this.walletIndex}] FIX paused — tunggu ${(waitMs/1000).toFixed(0)}s`);
+      await sleep(waitMs);
+      await this.apiRequest("POST", "/v1/fixes", [{ ...fix, speed: 0, steps: 0, ts: Date.now() }]);
+    } else if (res.status !== 200 && res.status !== 204) {
       log(`[W${this.walletIndex}] FIX rejected: ${res.status} ${res.body.slice(0, 300)}`);
     } else if (!this._fixLogged) {
       log(`[W${this.walletIndex}] FIX OK: ${res.status} ${res.body.slice(0, 300)}`);
@@ -1065,7 +1071,7 @@ class GCClient {
       await sleep(2800 + Math.random() * 400);
     }
 
-    const MIN_WALK_DIST = 400;
+    const MIN_WALK_DIST = 150;
     const MAX_WALK_DIST = 500;
     const DAILY_OPEN_LIMIT = 25;
     const MAX_REFETCH = 10;
@@ -1200,7 +1206,10 @@ class GCClient {
       refetchCount++;
       log(`[W${this.walletIndex}] Re-fetch crates dari posisi (${this.lat.toFixed(4)}, ${this.lng.toFixed(4)}) [re-fetch #${refetchCount}]`);
       stats.setWalletStatus(this.address, "refetching_crates");
-      await sleep(3000 + Math.random() * 2000);
+      const refetchDelay = Math.min(15000 + refetchCount * 10000, 60000);
+      log(`[W${this.walletIndex}] Tunggu ${(refetchDelay/1000).toFixed(0)}s sebelum re-fetch...`);
+      await sleep(refetchDelay);
+      await this.flushFixes(2);
       crates = await this.getCrates();
     }
 
