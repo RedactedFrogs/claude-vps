@@ -358,20 +358,32 @@ let relayCaptchaMode = false;
 
 async function solveTurnstileRelay(action, cData) {
   const relayPort = parseInt(process.env.RELAY_PORT || "18800");
-  log(`[relay] Solve turnstile action=${action}...`);
-  const res = await gcFetch(`http://localhost:${relayPort}/request`, {
+  log(`[relay] Solve turnstile action=${action} cdata=${(cData||"").slice(0,16)}...`);
+  const regRes = await gcFetch(`http://localhost:${relayPort}/request`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ action, cdata: cData || "", timeout: 120000 }),
-    timeout: 130000,
+    body: JSON.stringify({ action, cdata: cData || "" }),
+    timeout: 10000,
     agent: null,
   });
-  const data = res.json();
-  if (data?.token) {
-    log(`[relay] Token solved (${data.token.length} chars)`);
-    return data.token;
+  const regData = regRes.json();
+  if (!regData?.rid) throw new Error("Relay: failed to register request");
+  log(`[relay] Request registered rid=${regData.rid}, polling...`);
+  const deadline = Date.now() + 210000;
+  while (Date.now() < deadline) {
+    try {
+      const res = await gcFetch(`http://localhost:${relayPort}/pull?rid=${regData.rid}`, {
+        timeout: 10000, agent: null,
+      });
+      const data = res.json();
+      if (data?.token) {
+        log(`[relay] Token solved (${data.token.length} chars)`);
+        return data.token;
+      }
+    } catch {}
+    await new Promise(r => setTimeout(r, 3000));
   }
-  throw new Error(`Relay: ${data?.error || "no token"} — pastikan harvester page terbuka di browser`);
+  throw new Error(`Relay: no token — pastikan harvester page terbuka di browser`);
 }
 
 async function solveTurnstileBrowser(action, cData) {
