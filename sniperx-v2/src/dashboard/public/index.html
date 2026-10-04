@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>SniperX v2</title>
+  <link rel="stylesheet" href="/css/style.css">
+  <script src="/socket.io/socket.io.js"></script>
+</head>
+<body>
+  <!-- Login Screen -->
+  <div id="login-screen" class="screen active">
+    <div class="login-box">
+      <div class="logo">⚡ SniperX v2</div>
+      <p class="tagline">Multi-Chain Sniper Bot</p>
+      <input type="password" id="password-input" placeholder="Password" autofocus>
+      <button id="login-btn" onclick="doLogin()">Login</button>
+      <div id="login-error" class="error hidden"></div>
+    </div>
+  </div>
+
+  <!-- Main App -->
+  <div id="app-screen" class="screen hidden">
+    <!-- Header -->
+    <header>
+      <div class="header-left">
+        <span class="logo-sm">⚡ SniperX</span>
+        <span id="status-dot" class="dot offline"></span>
+      </div>
+      <div class="header-right">
+        <span id="wallet-count" class="badge">0 wallets</span>
+        <button class="icon-btn" onclick="showSection('settings')">⚙</button>
+      </div>
+    </header>
+
+    <!-- Navigation -->
+    <nav class="bottom-nav">
+      <button class="nav-btn active" data-section="dashboard" onclick="showSection('dashboard')">
+        <span class="nav-icon">📊</span><span class="nav-label">Dashboard</span>
+      </button>
+      <button class="nav-btn" data-section="token" onclick="showSection('token')">
+        <span class="nav-icon">🎯</span><span class="nav-label">Token</span>
+      </button>
+      <button class="nav-btn" data-section="nft" onclick="showSection('nft')">
+        <span class="nav-icon">🖼</span><span class="nav-label">NFT</span>
+      </button>
+      <button class="nav-btn" data-section="wallets" onclick="showSection('wallets')">
+        <span class="nav-icon">👛</span><span class="nav-label">Wallets</span>
+      </button>
+    </nav>
+
+    <!-- Sections -->
+    <main>
+      <!-- Dashboard Section -->
+      <section id="sec-dashboard" class="section active">
+        <h2>Dashboard</h2>
+        <div class="stat-grid">
+          <div class="stat-card">
+            <div class="stat-value" id="stat-wallets-active">0</div>
+            <div class="stat-label">Active Wallets</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-tokens-detected">0</div>
+            <div class="stat-label">Tokens Detected</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-tx-sent">0</div>
+            <div class="stat-label">TX Sent</div>
+          </div>
+          <div class="stat-card">
+            <div class="stat-value" id="stat-tx-confirmed">0</div>
+            <div class="stat-label">TX Confirmed</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Live Feed</h3>
+          <div id="live-feed" class="feed-list">
+            <div class="feed-empty">No events yet. Start monitoring to see activity.</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>RPC Status</h3>
+          <div id="rpc-status">Loading...</div>
+        </div>
+
+        <div class="card">
+          <h3>Proxy</h3>
+          <div class="row">
+            <span id="proxy-status-text">Disabled</span>
+            <label class="toggle">
+              <input type="checkbox" id="proxy-toggle" onchange="toggleProxy(this.checked)">
+              <span class="slider"></span>
+            </label>
+          </div>
+          <div id="proxy-list"></div>
+          <div class="row mt-10">
+            <input type="text" id="proxy-add-input" placeholder="socks5://user:pass@host:port" class="flex-1">
+            <button class="btn btn-sm" onclick="addProxy()">Add</button>
+          </div>
+        </div>
+      </section>
+
+      <!-- Token Sniper Section -->
+      <section id="sec-token" class="section hidden">
+        <h2>Token Sniper</h2>
+
+        <div class="card">
+          <h3>Monitor</h3>
+          <div class="row">
+            <span id="token-monitor-status">Stopped</span>
+            <button id="token-monitor-btn" class="btn btn-green" onclick="toggleTokenMonitor()">Start</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Auto-Buy Settings</h3>
+          <label class="toggle-row">
+            <span>Auto-Buy</span>
+            <label class="toggle">
+              <input type="checkbox" id="autobuy-toggle">
+              <span class="slider"></span>
+            </label>
+          </label>
+
+          <div class="form-group">
+            <label>Amount per wallet (ETH/BNB)</label>
+            <input type="number" id="autobuy-amount" value="0.001" step="0.001" min="0">
+          </div>
+
+          <div class="form-group">
+            <label>Slippage %</label>
+            <input type="number" id="autobuy-slippage" value="15" min="1" max="100">
+          </div>
+
+          <div class="form-group">
+            <label>Wallet count (0 = all enabled)</label>
+            <input type="number" id="autobuy-wallet-count" value="1" min="0" max="80">
+          </div>
+
+          <div class="form-group">
+            <label>Chains</label>
+            <div class="chain-checks">
+              <label><input type="checkbox" value="ethereum" checked> ETH</label>
+              <label><input type="checkbox" value="base"> Base</label>
+              <label><input type="checkbox" value="bsc"> BSC</label>
+            </div>
+          </div>
+
+          <button class="btn btn-full" onclick="saveAutoBuyConfig()">Save Settings</button>
+        </div>
+
+        <div class="card">
+          <h3>Manual Buy</h3>
+          <div class="form-group">
+            <label>Chain</label>
+            <select id="buy-chain">
+              <option value="ethereum">Ethereum</option>
+              <option value="base">Base</option>
+              <option value="bsc">BSC</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Token Address</label>
+            <input type="text" id="buy-token" placeholder="0x...">
+          </div>
+          <div class="form-group">
+            <label>Amount per wallet</label>
+            <input type="number" id="buy-amount" value="0.001" step="0.001">
+          </div>
+          <div class="form-group">
+            <label>Wallets to use</label>
+            <input type="number" id="buy-wallet-count" value="1" min="1" max="80">
+          </div>
+          <button class="btn btn-green btn-full" onclick="executeBuy()">BUY</button>
+        </div>
+
+        <div class="card">
+          <h3>Manual Sell</h3>
+          <div class="form-group">
+            <label>Chain</label>
+            <select id="sell-chain">
+              <option value="ethereum">Ethereum</option>
+              <option value="base">Base</option>
+              <option value="bsc">BSC</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Token Address</label>
+            <input type="text" id="sell-token" placeholder="0x...">
+          </div>
+          <div class="form-group">
+            <label>Sell % (100 = all)</label>
+            <input type="number" id="sell-percentage" value="100" min="1" max="100">
+          </div>
+          <button class="btn btn-red btn-full" onclick="executeSell()">SELL</button>
+        </div>
+
+        <div class="card">
+          <h3>Detected Tokens</h3>
+          <div id="detected-tokens" class="token-list">
+            <div class="feed-empty">No tokens detected yet</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- NFT Sniper Section -->
+      <section id="sec-nft" class="section hidden">
+        <h2>NFT Mint Sniper</h2>
+
+        <div class="card">
+          <h3>Add Mint Target</h3>
+          <div class="form-group">
+            <label>Label</label>
+            <input type="text" id="nft-label" placeholder="e.g. CoolNFT Mint">
+          </div>
+          <div class="form-group">
+            <label>Chain</label>
+            <select id="nft-chain">
+              <option value="ethereum">Ethereum</option>
+              <option value="base">Base</option>
+              <option value="bsc">BSC</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label>Contract Address</label>
+            <input type="text" id="nft-contract" placeholder="0x...">
+          </div>
+          <div class="form-group">
+            <label>Mint Function ABI</label>
+            <input type="text" id="nft-abi" value="function mint(uint256 quantity) payable" placeholder="function mint(uint256) payable">
+          </div>
+          <div class="form-group">
+            <label>Mint Args (comma-separated)</label>
+            <input type="text" id="nft-args" value="1" placeholder="1">
+          </div>
+          <div class="form-group">
+            <label>Price (ETH)</label>
+            <input type="number" id="nft-price" value="0" step="0.001">
+          </div>
+          <div class="form-group">
+            <label>Wallets to use</label>
+            <input type="number" id="nft-wallet-count" value="1" min="1" max="80">
+          </div>
+          <div class="form-group">
+            <label>Schedule (optional, WIB)</label>
+            <input type="datetime-local" id="nft-schedule">
+          </div>
+          <div class="form-group">
+            <label>Gas Multiplier</label>
+            <input type="number" id="nft-gas-mult" value="1.5" step="0.1" min="1">
+          </div>
+          <button class="btn btn-green btn-full" onclick="addNFTTarget()">Add Target</button>
+        </div>
+
+        <div class="card">
+          <h3>Active Targets</h3>
+          <div id="nft-targets" class="target-list">
+            <div class="feed-empty">No targets added</div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>Mint History</h3>
+          <div id="nft-history" class="target-list">
+            <div class="feed-empty">No history</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Wallets Section -->
+      <section id="sec-wallets" class="section hidden">
+        <h2>Wallets</h2>
+
+        <div class="card">
+          <div class="row">
+            <button class="btn btn-sm btn-green" onclick="enableAllWallets()">Enable All</button>
+            <button class="btn btn-sm btn-red" onclick="disableAllWallets()">Disable All</button>
+          </div>
+          <div class="row mt-10">
+            <input type="number" id="range-start" placeholder="From" min="0" class="w-60">
+            <input type="number" id="range-end" placeholder="To" min="0" class="w-60">
+            <button class="btn btn-sm" onclick="enableRange()">Enable Range</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h3>EVM Wallets <span id="evm-wallet-summary" class="badge">0/0</span></h3>
+          <div id="evm-wallet-list" class="wallet-list">Loading...</div>
+        </div>
+
+        <div class="card">
+          <h3>Solana Wallets <span id="sol-wallet-summary" class="badge">0/0</span></h3>
+          <div id="sol-wallet-list" class="wallet-list">Loading...</div>
+        </div>
+      </section>
+
+      <!-- Settings Section -->
+      <section id="sec-settings" class="section hidden">
+        <h2>Settings</h2>
+        <div class="card">
+          <h3>Stagger Timing</h3>
+          <div class="form-group">
+            <label>Min delay (ms)</label>
+            <input type="number" id="stagger-min" value="50" min="0">
+          </div>
+          <div class="form-group">
+            <label>Max delay (ms)</label>
+            <input type="number" id="stagger-max" value="200" min="0">
+          </div>
+        </div>
+        <div class="card">
+          <h3>Gas</h3>
+          <div class="form-group">
+            <label>Gas Multiplier</label>
+            <input type="number" id="gas-multiplier" value="1.3" step="0.1" min="1">
+          </div>
+        </div>
+        <button class="btn btn-full" onclick="saveSettings()">Save</button>
+
+        <div class="card mt-10">
+          <h3>Emergency</h3>
+          <button class="btn btn-red btn-full" onclick="emergencyStop()">STOP ALL TX</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script src="/js/app.js"></script>
+</body>
+</html>
