@@ -1,0 +1,19 @@
+[Unit]
+Description=SniperX v2 — Multi-Chain Sniper Bot
+After=network.target
+
+[Service]
+Type=simple
+User=boss
+WorkingDirectory=/home/boss/sniperx-v2
+ExecStart=/usr/bin/node src/index.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+
+# Log rotation — WAJIB supaya disk tidak penuh
+StandardOutput=append:/home/boss/sniperx-v2/logs/sniperx.log
+StandardError=append:/home/boss/sniperx-v2/logs/sniperx.log
+
+[Install]
+WantedBy=multi-user.target
