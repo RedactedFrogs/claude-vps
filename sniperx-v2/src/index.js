@@ -59,6 +59,10 @@ class SniperXApp {
       console.log('[Init] No wallets file found. Configure WALLETS_PATH in .env');
     }
 
+    // Load wallet socials (X/Twitter, Discord mapping)
+    const socialsPath = process.env.SOCIALS_PATH || path.join(__dirname, '..', 'config', 'wallet-socials.json');
+    this.walletManager.loadSocials(socialsPath);
+
     const mainKeyPath = process.env.MAIN_WALLET_KEY_PATH;
     if (mainKeyPath && fs.existsSync(mainKeyPath)) {
       this.walletManager.loadMainWallet(mainKeyPath);

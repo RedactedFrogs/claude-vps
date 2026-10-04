@@ -8,6 +8,8 @@ export class WalletManager {
     this.evmWallets = [];
     this.solanaWallets = [];
     this.mainWallet = null;
+    this.socialsPath = null;
+    this.socials = {};   // { walletAddress: { x: "@user", discord: "user#1234", ... } }
   }
 
   loadFromFile(filePath) {
@@ -24,7 +26,9 @@ export class WalletManager {
               address: wallet.address,
               privateKey: pk,
               label: entry.label || entry.name || wallet.address.slice(0, 8),
-              enabled: true
+              enabled: true,
+              x: entry.x || entry.twitter || '',
+              discord: entry.discord || ''
             });
           } catch {
             // might be solana
@@ -34,7 +38,9 @@ export class WalletManager {
                 address: kp.publicKey.toBase58(),
                 secretKey: pk,
                 label: entry.label || entry.name || kp.publicKey.toBase58().slice(0, 8),
-                enabled: true
+                enabled: true,
+                x: entry.x || entry.twitter || '',
+                discord: entry.discord || ''
               });
             } catch { /* skip invalid */ }
           }
@@ -95,6 +101,88 @@ export class WalletManager {
     }
   }
 
+  // === Social Accounts (X/Twitter, Discord) ===
+
+  loadSocials(filePath) {
+    this.socialsPath = filePath;
+    if (fs.existsSync(filePath)) {
+      this.socials = JSON.parse(fs.readFileSync(filePath, 'utf8'));
+      // Apply saved socials to loaded wallets
+      for (const w of [...this.evmWallets, ...this.solanaWallets]) {
+        const saved = this.socials[w.address.toLowerCase()];
+        if (saved) {
+          w.x = saved.x || w.x || '';
+          w.discord = saved.discord || w.discord || '';
+        }
+      }
+      const count = Object.keys(this.socials).length;
+      console.log(`[WalletManager] Loaded socials for ${count} wallets`);
+    }
+    return this;
+  }
+
+  saveSocials() {
+    if (!this.socialsPath) return;
+    for (const w of [...this.evmWallets, ...this.solanaWallets]) {
+      if (w.x || w.discord) {
+        this.socials[w.address.toLowerCase()] = { x: w.x, discord: w.discord };
+      }
+    }
+    fs.writeFileSync(this.socialsPath, JSON.stringify(this.socials, null, 2));
+  }
+
+  setSocial(index, type, field, value) {
+    const list = type === 'evm' ? this.evmWallets : this.solanaWallets;
+    if (!list[index]) return null;
+    list[index][field] = value;
+    this.saveSocials();
+    return list[index];
+  }
+
+  bulkSetX(type, xHandles) {
+    const list = type === 'evm' ? this.evmWallets : this.solanaWallets;
+    const handles = Array.isArray(xHandles) ? xHandles : xHandles.split('\n').map(h => h.trim()).filter(Boolean);
+    let assigned = 0;
+    for (let i = 0; i < Math.min(handles.length, list.length); i++) {
+      let handle = handles[i].trim();
+      if (handle && !handle.startsWith('@')) handle = '@' + handle;
+      list[i].x = handle;
+      assigned++;
+    }
+    this.saveSocials();
+    console.log(`[WalletManager] Bulk assigned ${assigned} X handles`);
+    return assigned;
+  }
+
+  bulkSetDiscord(type, discordNames) {
+    const list = type === 'evm' ? this.evmWallets : this.solanaWallets;
+    const names = Array.isArray(discordNames) ? discordNames : discordNames.split('\n').map(h => h.trim()).filter(Boolean);
+    let assigned = 0;
+    for (let i = 0; i < Math.min(names.length, list.length); i++) {
+      list[i].discord = names[i].trim();
+      assigned++;
+    }
+    this.saveSocials();
+    return assigned;
+  }
+
+  getWalletWithSocials(index, type = 'evm') {
+    const list = type === 'evm' ? this.evmWallets : this.solanaWallets;
+    if (!list[index]) return null;
+    const w = list[index];
+    return { index, address: w.address, label: w.label, x: w.x, discord: w.discord, enabled: w.enabled };
+  }
+
+  exportForWL(type = 'evm') {
+    const list = type === 'evm' ? this.evmWallets : this.solanaWallets;
+    return list.filter(w => w.enabled).map((w, i) => ({
+      index: i,
+      address: w.address,
+      x: w.x || '',
+      discord: w.discord || ''
+    }));
+  }
+
   getSummary() {
     return {
       evm: {
@@ -104,7 +192,9 @@ export class WalletManager {
           index: i,
           address: w.address,
           label: w.label,
-          enabled: w.enabled
+          enabled: w.enabled,
+          x: w.x || '',
+          discord: w.discord || ''
         }))
       },
       solana: {
@@ -114,7 +204,9 @@ export class WalletManager {
           index: i,
           address: w.address,
           label: w.label,
-          enabled: w.enabled
+          enabled: w.enabled,
+          x: w.x || '',
+          discord: w.discord || ''
         }))
       },
       mainWallet: this.mainWallet ? this.mainWallet.address : null

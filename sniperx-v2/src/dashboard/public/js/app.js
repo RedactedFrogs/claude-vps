@@ -417,13 +417,18 @@ async function loadWallets() {
   const evmList = document.getElementById('evm-wallet-list');
   if (data.evm.wallets.length > 0) {
     evmList.innerHTML = data.evm.wallets.map(w => `
-      <div class="wallet-item">
+      <div class="wallet-item" style="flex-wrap:wrap">
         <span class="wallet-idx">#${w.index}</span>
         <span class="wallet-addr">${w.address.slice(0,6)}...${w.address.slice(-4)}</span>
+        ${w.x ? `<span class="badge" style="background:rgba(29,155,240,0.2);color:#1d9bf0;font-size:11px">${w.x}</span>` : ''}
         <label class="toggle">
           <input type="checkbox" ${w.enabled ? 'checked' : ''} onchange="toggleWallet(${w.index},'evm')">
           <span class="slider"></span>
         </label>
+        <div style="width:100%;display:flex;gap:4px;margin-top:4px">
+          <input type="text" value="${w.x || ''}" placeholder="@x_handle" style="flex:1;padding:4px 8px;font-size:11px" onchange="setSocial(${w.index},'evm','x',this.value)">
+          <input type="text" value="${w.discord || ''}" placeholder="discord" style="flex:1;padding:4px 8px;font-size:11px" onchange="setSocial(${w.index},'evm','discord',this.value)">
+        </div>
       </div>
     `).join('');
   } else {
@@ -466,6 +471,56 @@ async function enableRange() {
   const end = Number(document.getElementById('range-end').value);
   await api('/api/wallets/enable-range', { start, end, type: 'evm' });
   loadWallets();
+}
+
+// === WALLET SOCIALS (X/Twitter, Discord) ===
+async function setSocial(index, type, field, value) {
+  await api('/api/wallets/set-social', { index, type, field, value });
+}
+
+async function bulkSetX() {
+  const handles = document.getElementById('bulk-x-input').value;
+  if (!handles.trim()) return alert('Paste X handles dulu');
+  const res = await api('/api/wallets/bulk-x', { type: 'evm', handles });
+  if (res.ok) {
+    addFeed(`${res.assigned} X handles saved`, 'green');
+    loadWallets();
+    document.getElementById('bulk-x-input').value = '';
+  }
+}
+
+async function bulkSetDiscord() {
+  const names = document.getElementById('bulk-discord-input').value;
+  if (!names.trim()) return alert('Paste Discord names dulu');
+  const res = await api('/api/wallets/bulk-discord', { type: 'evm', names });
+  if (res.ok) {
+    addFeed(`${res.assigned} Discord names saved`, 'green');
+    loadWallets();
+    document.getElementById('bulk-discord-input').value = '';
+  }
+}
+
+async function exportWL() {
+  const data = await apiGet('/api/wallets/export-wl?type=evm');
+  if (!data || data.length === 0) {
+    document.getElementById('wl-export-result').textContent = 'No enabled wallets';
+    return;
+  }
+  let csv = 'No,Address,X,Discord\n';
+  data.forEach((w, i) => {
+    csv += `${i + 1},${w.address},${w.x},${w.discord}\n`;
+  });
+
+  const blob = new Blob([csv], { type: 'text/csv' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `wl-export-${new Date().toISOString().slice(0,10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(url);
+
+  document.getElementById('wl-export-result').innerHTML =
+    `<span style="color:var(--green)">Exported ${data.length} wallets</span>`;
 }
 
 // === SETTINGS ===

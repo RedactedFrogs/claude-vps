@@ -294,6 +294,36 @@
           <h3>Solana Wallets <span id="sol-wallet-summary" class="badge">0/0</span></h3>
           <div id="sol-wallet-list" class="wallet-list">Loading...</div>
         </div>
+
+        <div class="card">
+          <h3>X / Twitter Accounts</h3>
+          <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+            Link X username ke setiap wallet. Otomatis ter-save untuk WL registration.
+          </p>
+          <div class="form-group">
+            <label>Bulk paste X handles (1 per baris, urut wallet #0, #1, ...)</label>
+            <textarea id="bulk-x-input" rows="4" placeholder="@user1&#10;@user2&#10;@user3&#10;..." style="width:100%;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-input);color:var(--text);font-size:13px;resize:vertical"></textarea>
+          </div>
+          <button class="btn btn-full" onclick="bulkSetX()">Save X Handles</button>
+        </div>
+
+        <div class="card">
+          <h3>Discord Accounts</h3>
+          <div class="form-group">
+            <label>Bulk paste Discord names (1 per baris)</label>
+            <textarea id="bulk-discord-input" rows="4" placeholder="user1#1234&#10;user2#5678&#10;..." style="width:100%;padding:10px;border:1px solid var(--border);border-radius:10px;background:var(--bg-input);color:var(--text);font-size:13px;resize:vertical"></textarea>
+          </div>
+          <button class="btn btn-full" onclick="bulkSetDiscord()">Save Discord Names</button>
+        </div>
+
+        <div class="card">
+          <h3>Export WL Data</h3>
+          <p style="font-size:12px;color:var(--text-dim);margin-bottom:10px">
+            Export daftar wallet + X + Discord untuk WL registration.
+          </p>
+          <button class="btn btn-sm" onclick="exportWL()">Export CSV</button>
+          <div id="wl-export-result" class="mt-10" style="font-size:12px"></div>
+        </div>
       </section>
 
       <!-- Settings Section -->

@@ -70,6 +70,30 @@ export class Dashboard {
       res.json({ ok: true });
     });
 
+    // Wallet socials (X/Twitter, Discord)
+    this.express.post('/api/wallets/set-social', auth, (req, res) => {
+      const { index, type, field, value } = req.body;
+      const result = this.app.walletManager.setSocial(index, type || 'evm', field, value);
+      res.json({ ok: !!result, wallet: result });
+    });
+
+    this.express.post('/api/wallets/bulk-x', auth, (req, res) => {
+      const { type, handles } = req.body;
+      const count = this.app.walletManager.bulkSetX(type || 'evm', handles);
+      res.json({ ok: true, assigned: count });
+    });
+
+    this.express.post('/api/wallets/bulk-discord', auth, (req, res) => {
+      const { type, names } = req.body;
+      const count = this.app.walletManager.bulkSetDiscord(type || 'evm', names);
+      res.json({ ok: true, assigned: count });
+    });
+
+    this.express.get('/api/wallets/export-wl', auth, (req, res) => {
+      const data = this.app.walletManager.exportForWL(req.query.type || 'evm');
+      res.json(data);
+    });
+
     // RPC endpoints
     this.express.get('/api/rpc/status', auth, (req, res) => {
       res.json(this.app.rpcManager.getStatus());
