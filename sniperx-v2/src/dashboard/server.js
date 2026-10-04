@@ -118,6 +118,27 @@ export class Dashboard {
       }
     });
 
+    // Gas price endpoint
+    this.express.get('/api/gas/:chain', auth, async (req, res) => {
+      try {
+        const chain = req.params.chain;
+        const provider = this.app.rpcManager.getEVMProvider(chain);
+        if (!provider) return res.status(400).json({ error: 'Unknown chain' });
+        const feeData = await provider.getFeeData();
+        const gasPrice = Number(feeData.gasPrice || 0n) / 1e9;
+        res.json({
+          chain,
+          gasPrice: Math.round(gasPrice * 100) / 100,
+          slow: Math.round(gasPrice * 0.85 * 100) / 100,
+          normal: Math.round(gasPrice * 100) / 100,
+          fast: Math.round(gasPrice * 1.5 * 100) / 100,
+          unit: 'gwei'
+        });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     // Token Sniper endpoints
     this.express.get('/api/sniper/token/config', auth, (req, res) => {
       res.json(this.app.tokenSniper.getConfig());

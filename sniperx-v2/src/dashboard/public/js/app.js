@@ -57,7 +57,7 @@ function showSection(name) {
 
   if (name === 'wallets') loadWallets();
   if (name === 'dashboard') loadDashboard();
-  if (name === 'nft') loadNFTTargets();
+  if (name === 'nft') { loadNFTTargets(); fetchGasPrice(); }
   if (name === 'token') loadDetectedTokens();
 }
 
@@ -306,6 +306,53 @@ function quickBuy(chain, token) {
   document.getElementById('buy-token').scrollIntoView();
 }
 
+// === GAS PRICE ===
+let gasData = { slow: 0, normal: 0, fast: 0, gasPrice: 0 };
+let selectedGasSpeed = 'normal';
+
+async function fetchGasPrice() {
+  const chain = document.getElementById('nft-chain').value;
+  const el = document.getElementById('gas-live');
+  el.textContent = 'Loading gas price...';
+  try {
+    const data = await apiGet(`/api/gas/${chain}`);
+    if (!data || data.error) { el.textContent = 'Gas price unavailable'; return; }
+    gasData = data;
+    el.innerHTML = `Live gas: <span class="gas-value">${data.gasPrice} gwei</span> (${chain})`;
+    document.querySelectorAll('.gas-btn').forEach(btn => {
+      const speed = btn.dataset.speed;
+      if (speed !== 'custom' && data[speed] !== undefined) {
+        btn.innerHTML = `${speed.charAt(0).toUpperCase() + speed.slice(1)}<span class="gas-gwei">${data[speed]} gwei</span>`;
+      }
+    });
+    updateGasMultiplier();
+  } catch (e) {
+    el.textContent = 'Gas price unavailable';
+  }
+}
+
+function selectGas(speed) {
+  selectedGasSpeed = speed;
+  document.querySelectorAll('.gas-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.gas-btn[data-speed="${speed}"]`).classList.add('active');
+  const customRow = document.getElementById('gas-custom-row');
+  if (speed === 'custom') { customRow.classList.remove('hidden'); }
+  else { customRow.classList.add('hidden'); updateGasMultiplier(); }
+}
+
+function updateGasMultiplier() {
+  if (gasData.gasPrice <= 0) return;
+  let mult = 1;
+  if (selectedGasSpeed === 'slow') mult = 0.85;
+  else if (selectedGasSpeed === 'normal') mult = 1;
+  else if (selectedGasSpeed === 'fast') mult = 1.5;
+  else if (selectedGasSpeed === 'custom') {
+    const custom = Number(document.getElementById('nft-gas-custom').value);
+    if (custom > 0) mult = custom / gasData.gasPrice;
+  }
+  document.getElementById('nft-gas-mult').value = Math.round(mult * 100) / 100;
+}
+
 // === NFT SNIPER ===
 async function addNFTTarget() {
   const args = document.getElementById('nft-args').value.split(',').map(a => {
@@ -319,8 +366,10 @@ async function addNFTTarget() {
     scheduledTime = new Date(scheduleInput).toISOString();
   }
 
+  if (selectedGasSpeed === 'custom') updateGasMultiplier();
+
   const target = {
-    label: document.getElementById('nft-label').value || undefined,
+    mintUrl: document.getElementById('nft-url').value.trim() || undefined,
     chain: document.getElementById('nft-chain').value,
     contractAddress: document.getElementById('nft-contract').value.trim(),
     mintFunction: document.getElementById('nft-abi').value,
@@ -351,11 +400,12 @@ async function loadNFTTargets() {
   el.innerHTML = targets.map(t => `
     <div class="target-item">
       <div class="target-header">
-        <span class="target-label">${t.label}</span>
+        <span class="target-label">${t.contractAddress.slice(0,6)}...${t.contractAddress.slice(-4)}</span>
         <span class="status-badge status-${t.status}">${t.status}</span>
       </div>
+      ${t.mintUrl ? `<div class="target-meta"><a href="${t.mintUrl}" target="_blank" style="color:var(--accent);text-decoration:none">${t.mintUrl}</a></div>` : ''}
       <div class="target-meta">
-        ${t.chain} · ${t.contractAddress.slice(0,10)}... · ${t.walletCount} wallets · ${t.price} ETH
+        ${t.chain} · ${t.walletCount} wallets · ${t.price} ETH · gas ${t.gasMultiplier}x
         ${t.scheduledTime ? '<br>Scheduled: ' + new Date(t.scheduledTime).toLocaleString('id-ID') : ''}
       </div>
       <div class="target-actions">

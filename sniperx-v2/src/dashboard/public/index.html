@@ -212,12 +212,12 @@
         <div class="card">
           <h3>Add Mint Target</h3>
           <div class="form-group">
-            <label>Label</label>
-            <input type="text" id="nft-label" placeholder="e.g. CoolNFT Mint">
+            <label>Mint Page URL</label>
+            <input type="url" id="nft-url" placeholder="https://project.xyz/mint">
           </div>
           <div class="form-group">
             <label>Chain</label>
-            <select id="nft-chain">
+            <select id="nft-chain" onchange="fetchGasPrice()">
               <option value="ethereum">Ethereum</option>
               <option value="base">Base</option>
               <option value="bsc">BSC</option>
@@ -248,8 +248,18 @@
             <input type="datetime-local" id="nft-schedule">
           </div>
           <div class="form-group">
-            <label>Gas Multiplier</label>
-            <input type="number" id="nft-gas-mult" value="1.5" step="0.1" min="1">
+            <label>Gas Fee</label>
+            <div id="gas-live" class="gas-live-info">Loading gas price...</div>
+            <div class="gas-options">
+              <button class="gas-btn" data-speed="slow" onclick="selectGas('slow')">Slow</button>
+              <button class="gas-btn active" data-speed="normal" onclick="selectGas('normal')">Normal</button>
+              <button class="gas-btn" data-speed="fast" onclick="selectGas('fast')">Fast</button>
+              <button class="gas-btn" data-speed="custom" onclick="selectGas('custom')">Custom</button>
+            </div>
+            <div id="gas-custom-row" class="form-group mt-10 hidden">
+              <input type="number" id="nft-gas-custom" placeholder="Gwei" step="0.1" min="0.1">
+            </div>
+            <input type="hidden" id="nft-gas-mult" value="1">
           </div>
           <button class="btn btn-green btn-full" onclick="addNFTTarget()">Add Target</button>
         </div>
