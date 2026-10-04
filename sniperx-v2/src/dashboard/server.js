@@ -118,6 +118,31 @@ export class Dashboard {
       }
     });
 
+    // Auto-detect chain from contract address
+    this.express.get('/api/chain/detect/:address', auth, async (req, res) => {
+      const address = req.params.address;
+      if (!/^0x[a-fA-F0-9]{40}$/.test(address)) {
+        return res.status(400).json({ error: 'Invalid address' });
+      }
+      try {
+        const checks = Object.keys(this.app.evmChains).map(async (chain) => {
+          try {
+            const provider = this.app.rpcManager.getEVMProvider(chain);
+            const code = await Promise.race([
+              provider.getCode(address),
+              new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), 5000))
+            ]);
+            return { chain, hasCode: code && code !== '0x' && code !== '0x0' };
+          } catch { return { chain, hasCode: false }; }
+        });
+        const results = await Promise.all(checks);
+        const found = results.filter(r => r.hasCode).map(r => r.chain);
+        res.json({ chains: found, primary: found[0] || null });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     // Gas price endpoint
     this.express.get('/api/gas/:chain', auth, async (req, res) => {
       try {

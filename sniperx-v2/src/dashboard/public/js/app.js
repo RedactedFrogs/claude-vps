@@ -353,6 +353,36 @@ function updateGasMultiplier() {
   document.getElementById('nft-gas-mult').value = Math.round(mult * 100) / 100;
 }
 
+// === AUTO-DETECT CHAIN ===
+let detectTimer = null;
+function onContractInput(val) {
+  const status = document.getElementById('chain-detect-status');
+  if (detectTimer) clearTimeout(detectTimer);
+  if (/^0x[a-fA-F0-9]{40}$/.test(val)) {
+    status.innerHTML = '<span style="color:var(--orange)">Detecting chain...</span>';
+    detectTimer = setTimeout(() => detectChain(val), 500);
+  } else {
+    status.textContent = '';
+  }
+}
+
+async function detectChain(address) {
+  const status = document.getElementById('chain-detect-status');
+  try {
+    const data = await apiGet(`/api/chain/detect/${address}`);
+    if (data && data.primary) {
+      document.getElementById('nft-chain').value = data.primary;
+      const chainNames = data.chains.map(c => c.charAt(0).toUpperCase() + c.slice(1));
+      status.innerHTML = `<span style="color:var(--green)">Found on: ${chainNames.join(', ')}</span>`;
+      fetchGasPrice();
+    } else {
+      status.innerHTML = '<span style="color:var(--text-dim)">Contract not found on any chain</span>';
+    }
+  } catch {
+    status.innerHTML = '<span style="color:var(--red)">Detection failed</span>';
+  }
+}
+
 // === NFT SNIPER ===
 async function addNFTTarget() {
   const args = document.getElementById('nft-args').value.split(',').map(a => {
@@ -368,10 +398,15 @@ async function addNFTTarget() {
 
   if (selectedGasSpeed === 'custom') updateGasMultiplier();
 
+  const mintUrl = document.getElementById('nft-url').value.trim();
+  const contractAddress = document.getElementById('nft-contract').value.trim();
+
+  if (!mintUrl && !contractAddress) return alert('Isi Mint URL atau Contract Address (minimal salah satu)');
+
   const target = {
-    mintUrl: document.getElementById('nft-url').value.trim() || undefined,
+    mintUrl: mintUrl || undefined,
     chain: document.getElementById('nft-chain').value,
-    contractAddress: document.getElementById('nft-contract').value.trim(),
+    contractAddress: contractAddress || undefined,
     mintFunction: document.getElementById('nft-abi').value,
     mintArgs: args,
     price: document.getElementById('nft-price').value,
@@ -379,8 +414,6 @@ async function addNFTTarget() {
     scheduledTime,
     gasMultiplier: Number(document.getElementById('nft-gas-mult').value)
   };
-
-  if (!target.contractAddress) return alert('Enter contract address');
 
   const res = await api('/api/sniper/nft/add-target', target);
   if (res.ok) {
@@ -397,26 +430,31 @@ async function loadNFTTargets() {
     return;
   }
 
-  el.innerHTML = targets.map(t => `
+  el.innerHTML = targets.map(t => {
+    const title = t.contractAddress
+      ? `${t.contractAddress.slice(0,6)}...${t.contractAddress.slice(-4)}`
+      : t.mintUrl ? new URL(t.mintUrl).hostname : 'NFT Target';
+    return `
     <div class="target-item">
       <div class="target-header">
-        <span class="target-label">${t.contractAddress.slice(0,6)}...${t.contractAddress.slice(-4)}</span>
+        <span class="target-label">${title}</span>
         <span class="status-badge status-${t.status}">${t.status}</span>
       </div>
       ${t.mintUrl ? `<div class="target-meta"><a href="${t.mintUrl}" target="_blank" style="color:var(--accent);text-decoration:none">${t.mintUrl}</a></div>` : ''}
+      ${t.contractAddress ? `<div class="target-meta" style="font-family:monospace;font-size:11px">${t.contractAddress}</div>` : ''}
       <div class="target-meta">
         ${t.chain} · ${t.walletCount} wallets · ${t.price} ETH · gas ${t.gasMultiplier}x
         ${t.scheduledTime ? '<br>Scheduled: ' + new Date(t.scheduledTime).toLocaleString('id-ID') : ''}
       </div>
       <div class="target-actions">
         ${t.status === 'pending' ? `
-          <button class="btn btn-sm btn-green" onclick="executeNFT('${t.id}')">Mint Now</button>
+          ${t.contractAddress ? `<button class="btn btn-sm btn-green" onclick="executeNFT('${t.id}')">Mint Now</button>` : ''}
           ${t.scheduledTime ? `<button class="btn btn-sm" onclick="scheduleNFT('${t.id}')">Schedule</button>` : ''}
           <button class="btn btn-sm btn-red" onclick="removeNFT('${t.id}')">Remove</button>
         ` : ''}
       </div>
-    </div>
-  `).join('');
+    </div>`;
+  }).join('');
 
   const history = await apiGet('/api/sniper/nft/history');
   const histEl = document.getElementById('nft-history');

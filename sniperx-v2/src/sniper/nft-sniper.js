@@ -12,10 +12,16 @@ export class NFTSniper extends EventEmitter {
   }
 
   addTarget(target) {
+    const label = target.contractAddress
+      ? target.contractAddress.slice(0, 10)
+      : target.mintUrl
+        ? new URL(target.mintUrl).hostname
+        : 'NFT Target';
     const entry = {
       id: Date.now().toString(36),
       chain: target.chain || 'ethereum',
-      contractAddress: target.contractAddress,
+      contractAddress: target.contractAddress || '',
+      mintUrl: target.mintUrl || '',
       mintFunction: target.mintFunction || 'function mint(uint256 quantity) payable',
       mintArgs: target.mintArgs || [1],
       price: target.price || '0',
@@ -27,7 +33,7 @@ export class NFTSniper extends EventEmitter {
       slippage: target.slippage || 15,
       gasMultiplier: target.gasMultiplier || 1.5,
       status: 'pending',
-      label: target.label || target.contractAddress.slice(0, 10),
+      label,
       createdAt: new Date().toISOString()
     };
     this.targets.push(entry);

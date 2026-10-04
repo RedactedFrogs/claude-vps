@@ -63,9 +63,19 @@ class SniperXApp {
     const socialsPath = process.env.SOCIALS_PATH || path.join(__dirname, '..', 'config', 'wallet-socials.json');
     this.walletManager.loadSocials(socialsPath);
 
-    const mainKeyPath = process.env.MAIN_WALLET_KEY_PATH;
+    const mainKeyPath = process.env.MAIN_WALLET_KEY_PATH || '/home/boss/.sniper_key';
     if (mainKeyPath && fs.existsSync(mainKeyPath)) {
       this.walletManager.loadMainWallet(mainKeyPath);
+    }
+
+    const validatorKeyPath = process.env.VALIDATOR_KEY_PATH || '/home/boss/.lobster_seed';
+    if (validatorKeyPath && fs.existsSync(validatorKeyPath)) {
+      this.walletManager.loadValidatorWallet(validatorKeyPath);
+    }
+
+    const phantomSeedPath = process.env.PHANTOM_SEED_PATH || '/home/boss/.phantom_seed';
+    if (phantomSeedPath && fs.existsSync(phantomSeedPath)) {
+      this.walletManager.loadPhantomWallet(phantomSeedPath);
     }
 
     // Load proxies

@@ -8,8 +8,10 @@ export class WalletManager {
     this.evmWallets = [];
     this.solanaWallets = [];
     this.mainWallet = null;
+    this.validatorWallet = null;
+    this.phantomWallet = null;
     this.socialsPath = null;
-    this.socials = {};   // { walletAddress: { x: "@user", discord: "user#1234", ... } }
+    this.socials = {};
   }
 
   loadFromFile(filePath) {
@@ -57,6 +59,60 @@ export class WalletManager {
     const wallet = new ethers.Wallet(pk);
     this.mainWallet = { address: wallet.address, privateKey: pk };
     console.log(`[WalletManager] Main wallet: ${wallet.address}`);
+    return this;
+  }
+
+  loadValidatorWallet(keyPath) {
+    try {
+      const raw = fs.readFileSync(keyPath, 'utf8').trim();
+      const lines = raw.split(/\s+/);
+      if (lines.length >= 12) {
+        console.log(`[WalletManager] Validator seed loaded (mnemonic ${lines.length} words)`);
+        this.validatorWallet = { type: 'mnemonic', mnemonic: raw, address: null };
+        try {
+          const hdWallet = ethers.Wallet.fromPhrase(raw);
+          this.validatorWallet.address = hdWallet.address;
+          this.validatorWallet.privateKey = hdWallet.privateKey;
+          console.log(`[WalletManager] Validator wallet: ${hdWallet.address}`);
+        } catch { /* mnemonic format not standard BIP39 */ }
+      } else {
+        const wallet = new ethers.Wallet(raw);
+        this.validatorWallet = { address: wallet.address, privateKey: raw };
+        console.log(`[WalletManager] Validator wallet: ${wallet.address}`);
+      }
+    } catch (err) {
+      console.log(`[WalletManager] Failed to load validator wallet: ${err.message}`);
+    }
+    return this;
+  }
+
+  loadPhantomWallet(seedPath) {
+    try {
+      const raw = fs.readFileSync(seedPath, 'utf8').trim();
+      const lines = raw.split(/\s+/);
+      if (lines.length >= 12) {
+        this.phantomWallet = { type: 'mnemonic', mnemonic: raw, address: '(seed loaded)' };
+        console.log(`[WalletManager] Phantom seed loaded (mnemonic ${lines.length} words)`);
+      } else {
+        try {
+          const kp = Keypair.fromSecretKey(bs58.decode(raw));
+          this.phantomWallet = { type: 'keypair', address: kp.publicKey.toBase58(), secretKey: raw };
+          console.log(`[WalletManager] Phantom wallet: ${kp.publicKey.toBase58()}`);
+        } catch {
+          try {
+            const arr = JSON.parse(raw);
+            const kp = Keypair.fromSecretKey(new Uint8Array(arr));
+            this.phantomWallet = { type: 'keypair', address: kp.publicKey.toBase58(), secretKey: bs58.encode(kp.secretKey) };
+            console.log(`[WalletManager] Phantom wallet: ${kp.publicKey.toBase58()}`);
+          } catch {
+            this.phantomWallet = { type: 'raw', address: '(loaded)' };
+            console.log('[WalletManager] Phantom seed loaded (unknown format)');
+          }
+        }
+      }
+    } catch (err) {
+      console.log(`[WalletManager] Failed to load phantom wallet: ${err.message}`);
+    }
     return this;
   }
 
@@ -209,7 +265,9 @@ export class WalletManager {
           discord: w.discord || ''
         }))
       },
-      mainWallet: this.mainWallet ? this.mainWallet.address : null
+      mainWallet: this.mainWallet ? this.mainWallet.address : null,
+      validatorWallet: this.validatorWallet ? this.validatorWallet.address : null,
+      phantomWallet: this.phantomWallet ? this.phantomWallet.address : null
     };
   }
 }

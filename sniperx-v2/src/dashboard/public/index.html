@@ -145,6 +145,9 @@
               <label><input type="checkbox" value="ethereum" checked> ETH</label>
               <label><input type="checkbox" value="base"> Base</label>
               <label><input type="checkbox" value="bsc"> BSC</label>
+              <label><input type="checkbox" value="robinhood"> Robinhood</label>
+              <label><input type="checkbox" value="ink"> Ink</label>
+              <label><input type="checkbox" value="arc"> Arc</label>
             </div>
           </div>
 
@@ -159,6 +162,9 @@
               <option value="ethereum">Ethereum</option>
               <option value="base">Base</option>
               <option value="bsc">BSC</option>
+              <option value="robinhood">Robinhood</option>
+              <option value="ink">Ink</option>
+              <option value="arc">Arc</option>
             </select>
           </div>
           <div class="form-group">
@@ -184,6 +190,9 @@
               <option value="ethereum">Ethereum</option>
               <option value="base">Base</option>
               <option value="bsc">BSC</option>
+              <option value="robinhood">Robinhood</option>
+              <option value="ink">Ink</option>
+              <option value="arc">Arc</option>
             </select>
           </div>
           <div class="form-group">
@@ -221,11 +230,15 @@
               <option value="ethereum">Ethereum</option>
               <option value="base">Base</option>
               <option value="bsc">BSC</option>
+              <option value="robinhood">Robinhood</option>
+              <option value="ink">Ink</option>
+              <option value="arc">Arc</option>
             </select>
           </div>
           <div class="form-group">
-            <label>Contract Address</label>
-            <input type="text" id="nft-contract" placeholder="0x...">
+            <label>Contract Address (optional — auto-detect chain)</label>
+            <input type="text" id="nft-contract" placeholder="0x... (opsional)" oninput="onContractInput(this.value)">
+            <div id="chain-detect-status" style="font-size:12px;color:var(--text-dim);margin-top:4px"></div>
           </div>
           <div class="form-group">
             <label>Mint Function ABI</label>

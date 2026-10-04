@@ -20,6 +20,10 @@ export class RPCManager {
       });
     }
 
+    if (chainConfig.rpc) {
+      rpcs.push({ url: chainConfig.rpc, name: new URL(chainConfig.rpc).hostname, priority: 1 });
+    }
+
     for (const url of extraRpcs) {
       if (url.trim()) {
         rpcs.push({ url: url.trim(), name: new URL(url.trim()).hostname, priority: 2 });
