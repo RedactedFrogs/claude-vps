@@ -2,6 +2,7 @@ import { EventEmitter } from 'events';
 
 export class Scheduler extends EventEmitter {
   constructor() {
+    super();
     this.jobs = [];
     this.timers = new Map();
   }
