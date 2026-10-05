@@ -463,9 +463,23 @@ async function addNFTTarget() {
 
   const res = await api('/api/sniper/nft/add-target', target);
   if (res.ok) {
-    addFeed(`NFT target added: ${res.target.label}`, 'green');
+    addFeed(`NFT target saved: ${res.target.label}`, 'green');
     loadNFTTargets();
   }
+  return res;
+}
+
+async function mintNFTNow() {
+  const res = await addNFTTarget();
+  if (!res || !res.ok) return;
+  addFeed(`Minting ${res.target.label}...`, 'orange');
+  const mint = await api('/api/sniper/nft/execute', { id: res.target.id });
+  if (mint.ok) {
+    addFeed(`Mint success: ${mint.result?.confirmed || 0} confirmed`, 'green');
+  } else {
+    addFeed(`Mint failed: ${mint.error}`, 'red');
+  }
+  loadNFTTargets();
 }
 
 async function loadNFTTargets() {
@@ -494,7 +508,7 @@ async function loadNFTTargets() {
       </div>
       <div class="target-actions">
         ${t.status === 'pending' ? `
-          ${t.contractAddress ? `<button class="btn btn-sm btn-green" onclick="executeNFT('${t.id}')">Mint Now</button>` : ''}
+          <button class="btn btn-sm btn-green" onclick="executeNFT('${t.id}')">⚡ Mint</button>
           ${t.scheduledTime ? `<button class="btn btn-sm" onclick="scheduleNFT('${t.id}')">Schedule</button>` : ''}
           <button class="btn btn-sm btn-red" onclick="removeNFT('${t.id}')">Remove</button>
         ` : ''}
