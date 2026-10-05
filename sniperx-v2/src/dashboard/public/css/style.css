@@ -315,6 +315,42 @@ input:checked + .slider::before { transform: translateX(20px); }
 }
 .gas-btn.active .gas-gwei { color: var(--accent); }
 
+/* Wallet Picker */
+.wallet-picker { display: flex; flex-direction: column; gap: 6px; }
+.wp-option {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--bg-input);
+  cursor: pointer;
+  transition: all 0.2s;
+}
+.wp-option.active {
+  border-color: var(--accent);
+  background: rgba(59,130,246,0.08);
+}
+.wp-option .wp-radio {
+  width: 18px; height: 18px;
+  border: 2px solid var(--border);
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+}
+.wp-option.active .wp-radio {
+  border-color: var(--accent);
+}
+.wp-option.active .wp-radio::after {
+  content: '';
+  width: 10px; height: 10px;
+  background: var(--accent);
+  border-radius: 50%;
+}
+.wp-name { font-size: 14px; font-weight: 600; }
+.wp-addr { font-size: 11px; color: var(--text-dim); font-family: monospace; }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }

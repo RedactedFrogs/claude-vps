@@ -26,6 +26,7 @@ export class NFTSniper extends EventEmitter {
       mintArgs: target.mintArgs || [1],
       price: target.price || '0',
       maxPerWallet: target.maxPerWallet || 1,
+      walletSource: target.walletSource || 'bot',
       walletCount: target.walletCount || 1,
       useAllWallets: target.useAllWallets || false,
       walletIndices: target.walletIndices || null,
@@ -62,14 +63,15 @@ export class NFTSniper extends EventEmitter {
 
     try {
       const provider = chain.getProvider();
-      const count = target.useAllWallets
-        ? this.walletManager.getEnabledEVM().length
-        : target.walletCount;
-      const wallets = target.walletIndices
-        ? this.walletManager.getEVMSigners(provider, target.walletIndices)
-        : this.walletManager.getEVMSigners(provider).slice(0, count);
+      const wallets = this.walletManager.getSignersForMint(
+        provider,
+        target.walletSource || 'bot',
+        target.walletCount || 1
+      );
 
-      console.log(`[NFTSniper] Executing mint: ${target.label} with ${wallets.length} wallets`);
+      if (wallets.length === 0) throw new Error('No wallet available for mint');
+
+      console.log(`[NFTSniper] Executing mint: ${target.label} with ${wallets.length} wallet(s) [${target.walletSource}]`);
 
       this.txEngine.updateConfig({ gasMultiplier: target.gasMultiplier });
 

@@ -57,7 +57,7 @@ function showSection(name) {
 
   if (name === 'wallets') loadWallets();
   if (name === 'dashboard') loadDashboard();
-  if (name === 'nft') { loadNFTTargets(); fetchGasPrice(); }
+  if (name === 'nft') { loadNFTTargets(); fetchGasPrice(); loadWalletPicker(); }
   if (name === 'token') loadDetectedTokens();
 }
 
@@ -353,6 +353,51 @@ function updateGasMultiplier() {
   document.getElementById('nft-gas-mult').value = Math.round(mult * 100) / 100;
 }
 
+// === WALLET PICKER ===
+let selectedWalletSource = 'main';
+
+async function loadWalletPicker() {
+  const data = await apiGet('/api/wallets');
+  if (!data) return;
+  const picker = document.getElementById('wallet-picker');
+  const mainAddr = data.mainWallet;
+  const valAddr = data.validatorWallet;
+  const botCount = data.evm?.total || 0;
+  const botEnabled = data.evm?.enabled || 0;
+
+  let html = '';
+  if (mainAddr) {
+    html += `<div class="wp-option ${selectedWalletSource === 'main' ? 'active' : ''}" onclick="selectWallet('main')">
+      <div class="wp-radio"></div>
+      <div><div class="wp-name">Wallet Utama</div><div class="wp-addr">${mainAddr.slice(0,6)}...${mainAddr.slice(-4)}</div></div>
+    </div>`;
+  }
+  if (valAddr) {
+    html += `<div class="wp-option ${selectedWalletSource === 'validator' ? 'active' : ''}" onclick="selectWallet('validator')">
+      <div class="wp-radio"></div>
+      <div><div class="wp-name">Wallet Validator</div><div class="wp-addr">${valAddr.slice(0,6)}...${valAddr.slice(-4)}</div></div>
+    </div>`;
+  }
+  if (botCount > 0) {
+    html += `<div class="wp-option ${selectedWalletSource === 'bot' ? 'active' : ''}" onclick="selectWallet('bot')">
+      <div class="wp-radio"></div>
+      <div><div class="wp-name">Bot Wallets</div><div class="wp-addr">${botEnabled}/${botCount} aktif</div></div>
+    </div>`;
+  }
+  picker.innerHTML = html;
+  document.getElementById('bot-count-row').classList.toggle('hidden', selectedWalletSource !== 'bot');
+}
+
+function selectWallet(source) {
+  selectedWalletSource = source;
+  document.querySelectorAll('.wp-option').forEach(el => el.classList.remove('active'));
+  const clicked = [...document.querySelectorAll('.wp-option')].find(el =>
+    el.getAttribute('onclick')?.includes(`'${source}'`)
+  );
+  if (clicked) clicked.classList.add('active');
+  document.getElementById('bot-count-row').classList.toggle('hidden', source !== 'bot');
+}
+
 // === AUTO-DETECT CHAIN ===
 let detectTimer = null;
 function onContractInput(val) {
@@ -410,6 +455,7 @@ async function addNFTTarget() {
     mintFunction: document.getElementById('nft-abi').value,
     mintArgs: args,
     price: document.getElementById('nft-price').value,
+    walletSource: selectedWalletSource,
     walletCount: Number(document.getElementById('nft-wallet-count').value),
     scheduledTime,
     gasMultiplier: Number(document.getElementById('nft-gas-mult').value)
@@ -443,7 +489,7 @@ async function loadNFTTargets() {
       ${t.mintUrl ? `<div class="target-meta"><a href="${t.mintUrl}" target="_blank" style="color:var(--accent);text-decoration:none">${t.mintUrl}</a></div>` : ''}
       ${t.contractAddress ? `<div class="target-meta" style="font-family:monospace;font-size:11px">${t.contractAddress}</div>` : ''}
       <div class="target-meta">
-        ${t.chain} · ${t.walletCount} wallets · ${t.price} ETH · gas ${t.gasMultiplier}x
+        ${t.chain} · ${t.walletSource === 'main' ? 'Wallet Utama' : t.walletSource === 'validator' ? 'Wallet Validator' : t.walletCount + ' bot wallets'} · ${t.price} ETH · gas ${t.gasMultiplier}x
         ${t.scheduledTime ? '<br>Scheduled: ' + new Date(t.scheduledTime).toLocaleString('id-ID') : ''}
       </div>
       <div class="target-actions">

@@ -253,8 +253,14 @@
             <input type="number" id="nft-price" value="0" step="0.001">
           </div>
           <div class="form-group">
-            <label>Wallets to use</label>
-            <input type="number" id="nft-wallet-count" value="1" min="1" max="80">
+            <label>Pilih Wallet</label>
+            <div id="wallet-picker" class="wallet-picker">
+              <!-- Filled by JS from /api/wallets -->
+            </div>
+            <div id="bot-count-row" class="mt-10 hidden">
+              <label style="font-size:12px;color:var(--text-dim)">Jumlah bot wallets</label>
+              <input type="number" id="nft-wallet-count" value="1" min="1" max="80">
+            </div>
           </div>
           <div class="form-group">
             <label>Schedule (optional, WIB)</label>

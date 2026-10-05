@@ -116,6 +116,40 @@ export class WalletManager {
     return this;
   }
 
+  getNamedSigner(provider, name) {
+    if (name === 'main' && this.mainWallet?.privateKey) {
+      return new ethers.Wallet(this.mainWallet.privateKey, provider);
+    }
+    if (name === 'validator' && this.validatorWallet?.privateKey) {
+      return new ethers.Wallet(this.validatorWallet.privateKey, provider);
+    }
+    return null;
+  }
+
+  getSignersForMint(provider, walletSource, botCount = 1) {
+    if (walletSource === 'main') {
+      const s = this.getNamedSigner(provider, 'main');
+      return s ? [s] : [];
+    }
+    if (walletSource === 'validator') {
+      const s = this.getNamedSigner(provider, 'validator');
+      return s ? [s] : [];
+    }
+    if (walletSource === 'bot') {
+      return this.getEVMSigners(provider).slice(0, botCount);
+    }
+    if (walletSource === 'all') {
+      const signers = [];
+      const main = this.getNamedSigner(provider, 'main');
+      if (main) signers.push(main);
+      const val = this.getNamedSigner(provider, 'validator');
+      if (val) signers.push(val);
+      signers.push(...this.getEVMSigners(provider));
+      return signers;
+    }
+    return this.getEVMSigners(provider).slice(0, botCount);
+  }
+
   getEVMSigners(provider, indices) {
     const selected = indices
       ? this.evmWallets.filter((_, i) => indices.includes(i))
