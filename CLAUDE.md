@@ -81,7 +81,20 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 - **Skip crate yang expiry < 3 menit** — filter `expiresAt > now + 180000` agar tidak buang waktu ke crate yang mau habis.
 - Captcha Turnstile TIDAK bisa di-solve headless — user harus paste script di Console browser gocollect.fun.
 - Harvester page: relay URL + `/harvest` (copy script button).
-- Kalau update/rewrite gc-farm.mjs, **ketiga aturan di atas (min 420m, freshest first, skip expired <3min) WAJIB dipertahankan**.
+- **motion_warming**: jangan tunggu/retry — langsung skip crate, re-fetch yang baru.
+- Kalau update/rewrite gc-farm.mjs, **semua aturan di atas WAJIB dipertahankan**.
+
+### Fitur Anti-Deteksi (JANGAN HAPUS/UBAH)
+Fitur-fitur berikut sudah disempurnakan bersama bot Python teman owner. Wajib dipertahankan:
+1. **GPS walk simulation** — path melengkung (curve + jitter), bukan garis lurus. Speed bervariasi (1.1-1.6 m/s), ada pause random 12% chance, accuracy drift 3-10m.
+2. **Trail persistence** — posisi GPS, heading, step count disimpan di `gc-trail.json`, di-resume saat restart (tidak teleport).
+3. **Dwell time** — tunggu 2-7 detik random setelah sampai di crate sebelum open.
+4. **curl-impersonate** — pakai `curl_chrome116` untuk request, bukan fetch biasa. Header & TLS fingerprint seperti Chrome asli.
+5. **HMAC proof** — setiap request ditandatangani dengan `x-gc-proof` (method + path + timestamp + deviceId).
+6. **Device fingerprint** — deviceId persisten, userAgent Pixel 8 Pro / Chrome 128.
+7. **Anti-ban break** — setiap 8 crate, istirahat 3-7 menit (`cratesPerSession`, `breakMinMinutes`, `breakMaxMinutes`).
+8. **GPS fix realistis** — altitude, altitudeAccuracy, heading, motion confidence, step count semua di-randomize dalam range wajar.
+9. **Step count akumulasi** — `_totalSteps` terus naik sepanjang sesi, tidak reset.
 
 ## KALAU BRIDGE 401 (token HP belum terdaftar di VPS2)
 Minta **kode daftar** ke owner (owner minta ke Claude laptop; kode 8 huruf, sekali pakai, berlaku 1 jam). Lalu jalankan (ganti KODE), kemudian ulang `vps "echo BRIDGE_OK && hostname"`:
