@@ -73,6 +73,16 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 - Disk VPS2 pernah penuh 100% gara-gara log bot yang error-loop — bot baru WAJIB batasi ukuran log-nya.
 - Untuk edit file di VPS: jangan minta user copy-paste; pakai `vps "cat > /path/file <<'EOF' ... EOF"` atau base64 transfer.
 
+## GOCOLLECT BOT — ATURAN WAJIB
+- Service: `gc-farm.service`, kode: `/home/boss/claude-vps/gocollect/gc-farm.mjs`
+- Relay captcha: `/root/gocollect/token_relay.mjs` (port 3458, tunnel cloudflared)
+- **MIN_WALK_DIST = 420m** — jarak minimum ke crate. JANGAN turunkan di bawah 420m.
+- **Sorting crate: freshest first** — urutkan berdasarkan `expiresAt` tertinggi (crate baru muncul = expiry masih lama). JANGAN sort by jarak terdekat.
+- **Skip crate yang expiry < 3 menit** — filter `expiresAt > now + 180000` agar tidak buang waktu ke crate yang mau habis.
+- Captcha Turnstile TIDAK bisa di-solve headless — user harus paste script di Console browser gocollect.fun.
+- Harvester page: relay URL + `/harvest` (copy script button).
+- Kalau update/rewrite gc-farm.mjs, **ketiga aturan di atas (min 420m, freshest first, skip expired <3min) WAJIB dipertahankan**.
+
 ## KALAU BRIDGE 401 (token HP belum terdaftar di VPS2)
 Minta **kode daftar** ke owner (owner minta ke Claude laptop; kode 8 huruf, sekali pakai, berlaku 1 jam). Lalu jalankan (ganti KODE), kemudian ulang `vps "echo BRIDGE_OK && hostname"`:
 
