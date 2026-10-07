@@ -58,6 +58,14 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 - Wallet validator `0x9C98Cc106b01C0B9dAEA980aa36a5d731587bDa8` → `/home/boss/.lobster_seed`
 - 80 wallet bot → `/home/boss/.pixelpals_wallets.json`
 - Seed Phantom → `/home/boss/.phantom_seed`
+- Seed UniSat (BTC) → `/home/boss/.unisat_seed`
+- **Alamat BTC per akun X:**
+  - `@boss_venture89` → `bc1p5g8grjjp6g906g8ezq2nar7krw6nffal0y82y8d6p8ryju55fn7qwx0xkh`
+  - `@redacted_frogs` → `bc1p8sl6dlkg0r20hksa5pzpv870haamvzswz3zy2jzh4xg02ldcashq7c84rv`
+  - `@mallardordinals` → `bc1pmvy6r6utckqnv7zwdpfe2x7eyeen0v0dnlt2krhee8qfvwls307q5xlfjf`
+  - `@bossventure168` → `bc1phwgh2vsfq0avzmug9vkan8vvdv4l04nys02lztt5dx6w83dkd65qzjkdez`
+  - `@gryfindor_bot` → `bc1p67h28r0re5azm0z9phukf79a22xefyze84n6pfc3pq7fgw7uryuqgn5620`
+  - `@hendrawanipiro` → `bc1p9geqg3krnumgh2xawpve3l536tne6kmrg89qfenyk42zhzlckh4qfezq8z`
 - Operasi massal (sweep/konsolidasi) **HANYA 80 wallet bot**; utama & validator jangan disentuh kecuali user sebut eksplisit.
 
 ## LOGS
@@ -72,29 +80,6 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 - **Jangan sebut jumlah wallet ke Discord/external** (Sybil discretion).
 - Disk VPS2 pernah penuh 100% gara-gara log bot yang error-loop — bot baru WAJIB batasi ukuran log-nya.
 - Untuk edit file di VPS: jangan minta user copy-paste; pakai `vps "cat > /path/file <<'EOF' ... EOF"` atau base64 transfer.
-
-## GOCOLLECT BOT — ATURAN WAJIB
-- Service: `gc-farm.service`, kode: `/home/boss/claude-vps/gocollect/gc-farm.mjs`
-- Relay captcha: `/root/gocollect/token_relay.mjs` (port 3458, tunnel cloudflared)
-- **MIN_WALK_DIST = 420m** — jarak minimum ke crate. JANGAN turunkan di bawah 420m.
-- **Sorting crate: freshest first** — urutkan berdasarkan `expiresAt` tertinggi (crate baru muncul = expiry masih lama). JANGAN sort by jarak terdekat.
-- **Skip crate yang expiry < 3 menit** — filter `expiresAt > now + 180000` agar tidak buang waktu ke crate yang mau habis.
-- Captcha Turnstile TIDAK bisa di-solve headless — user harus paste script di Console browser gocollect.fun.
-- Harvester page: relay URL + `/harvest` (copy script button).
-- **motion_warming**: jangan tunggu/retry — langsung skip crate, re-fetch yang baru.
-- Kalau update/rewrite gc-farm.mjs, **semua aturan di atas WAJIB dipertahankan**.
-
-### Fitur Anti-Deteksi (JANGAN HAPUS/UBAH)
-Fitur-fitur berikut sudah disempurnakan bersama bot Python teman owner. Wajib dipertahankan:
-1. **GPS walk simulation** — path melengkung (curve + jitter), bukan garis lurus. Speed bervariasi (1.1-1.6 m/s), ada pause random 12% chance, accuracy drift 3-10m.
-2. **Trail persistence** — posisi GPS, heading, step count disimpan di `gc-trail.json`, di-resume saat restart (tidak teleport).
-3. **Dwell time** — tunggu 2-7 detik random setelah sampai di crate sebelum open.
-4. **curl-impersonate** — pakai `curl_chrome116` untuk request, bukan fetch biasa. Header & TLS fingerprint seperti Chrome asli.
-5. **HMAC proof** — setiap request ditandatangani dengan `x-gc-proof` (method + path + timestamp + deviceId).
-6. **Device fingerprint** — deviceId persisten, userAgent Pixel 8 Pro / Chrome 128.
-7. **Anti-ban break** — setiap 8 crate, istirahat 3-7 menit (`cratesPerSession`, `breakMinMinutes`, `breakMaxMinutes`).
-8. **GPS fix realistis** — altitude, altitudeAccuracy, heading, motion confidence, step count semua di-randomize dalam range wajar.
-9. **Step count akumulasi** — `_totalSteps` terus naik sepanjang sesi, tidak reset.
 
 ## KALAU BRIDGE 401 (token HP belum terdaftar di VPS2)
 Minta **kode daftar** ke owner (owner minta ke Claude laptop; kode 8 huruf, sekali pakai, berlaku 1 jam). Lalu jalankan (ganti KODE), kemudian ulang `vps "echo BRIDGE_OK && hostname"`:
