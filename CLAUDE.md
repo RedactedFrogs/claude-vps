@@ -58,6 +58,14 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 - Wallet validator `0x9C98Cc106b01C0B9dAEA980aa36a5d731587bDa8` → `/home/boss/.lobster_seed`
 - 80 wallet bot → `/home/boss/.pixelpals_wallets.json`
 - Seed Phantom → `/home/boss/.phantom_seed`
+- Seed UniSat (BTC) → `/home/boss/.unisat_seed`
+- **Alamat BTC per akun X:**
+  - `@boss_venture89` → `bc1p5g8grjjp6g906g8ezq2nar7krw6nffal0y82y8d6p8ryju55fn7qwx0xkh`
+  - `@redacted_frogs` → `bc1p8sl6dlkg0r20hksa5pzpv870haamvzswz3zy2jzh4xg02ldcashq7c84rv`
+  - `@mallardordinals` → `bc1pmvy6r6utckqnv7zwdpfe2x7eyeen0v0dnlt2krhee8qfvwls307q5xlfjf`
+  - `@bossventure168` → `bc1phwgh2vsfq0avzmug9vkan8vvdv4l04nys02lztt5dx6w83dkd65qzjkdez`
+  - `@gryfindor_bot` → `bc1p67h28r0re5azm0z9phukf79a22xefyze84n6pfc3pq7fgw7uryuqgn5620`
+  - `@hendrawanipiro` → `bc1p9geqg3krnumgh2xawpve3l536tne6kmrg89qfenyk42zhzlckh4qfezq8z`
 - Operasi massal (sweep/konsolidasi) **HANYA 80 wallet bot**; utama & validator jangan disentuh kecuali user sebut eksplisit.
 
 ## LOGS
