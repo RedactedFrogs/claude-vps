@@ -81,7 +81,7 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 - **Skip crate yang expiry < 3 menit** — filter `expiresAt > now + 180000` agar tidak buang waktu ke crate yang mau habis.
 - Captcha Turnstile TIDAK bisa di-solve headless — user harus paste script di Console browser gocollect.fun.
 - Harvester page: relay URL + `/harvest` (copy script button).
-- **motion_warming**: jangan tunggu/retry — langsung skip crate, re-fetch yang baru.
+- **motion_warming**: tunggu `readyInMs` sambil kirim GPS diam di posisi crate, lalu retry open (max 4x). Jangan skip — proven berhasil buka crate di retry ke-2/3.
 - Kalau update/rewrite gc-farm.mjs, **semua aturan di atas WAJIB dipertahankan**.
 
 ### Fitur Anti-Deteksi (JANGAN HAPUS/UBAH)
