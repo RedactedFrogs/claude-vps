@@ -3,32 +3,60 @@
 File ini dibaca otomatis setiap sesi baru. Owner: **Hermawan** (pemula, Bahasa Indonesia). Jawab singkat. Kerjakan sendiri via bridge VPS, jangan suruh user.
 
 ## BOOTSTRAP — WAJIB JALANKAN PERTAMA KALI
-Sebelum apapun, jalankan ini di bash agar fungsi `vps` aktif. URL bridge dibaca dari `bridge_url.txt` di repo (VPS2 auto-publish tiap 2 menit saat URL rotate, jadi selalu fresh — `git pull` dulu agar dapat versi terbaru):
+Sebelum apapun, jalankan ini di bash agar fungsi `vps` aktif. URL bridge dibaca dari `bridge_url.txt` di repo. Watchdog VPS2 (tiap 1 menit) otomatis restart tunnel yang mati dan publish URL barunya ke repo. Fungsi `vps` di bawah **self-healing**: kalau tunnel mati, dia `git pull` sendiri, ambil URL terbaru, lalu coba ulang.
 
 ```bash
 git pull --quiet 2>/dev/null || true
+export VPS_REPO_DIR=$(pwd)
 export VPS_BRIDGE_URL=$(cat bridge_url.txt | tr -d '[:space:]')
+echo "$VPS_BRIDGE_URL" > /tmp/vps_bridge_url
 echo "Bridge URL = $VPS_BRIDGE_URL"
 # Token disuplai dari Cloud env var VPS_BRIDGE_TOKEN
 
 vps() {
-  python3 -c '
-import sys, os, json, urllib.request
+  python3 - "$*" <<'PY'
+import sys, os, json, time, socket, subprocess, urllib.request, urllib.error
 cmd = sys.argv[1]
-req = urllib.request.Request(
-    os.environ["VPS_BRIDGE_URL"] + "/exec",
-    data=json.dumps({"cmd": cmd, "timeout": 180}).encode(),
-    headers={"X-Token": os.environ["VPS_BRIDGE_TOKEN"], "Content-Type": "application/json"},
-    method="POST",
-)
-try:
-    resp = json.load(urllib.request.urlopen(req, timeout=200))
-except Exception as e:
-    print(f"BRIDGE ERROR: {e}", file=sys.stderr); sys.exit(1)
-sys.stdout.write(resp.get("stdout",""))
+repo = os.environ.get("VPS_REPO_DIR", ".")
+CACHE = "/tmp/vps_bridge_url"
+def fresh_url():
+    subprocess.run(["git", "-C", repo, "pull", "--quiet"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=45)
+    try: u = open(os.path.join(repo, "bridge_url.txt")).read().strip()
+    except Exception: u = ""
+    if u: open(CACHE, "w").write(u)
+    return u
+try: url = open(CACHE).read().strip()
+except Exception: url = ""
+url = url or os.environ.get("VPS_BRIDGE_URL", "") or fresh_url()
+TIMEOUT_MSG = "BRIDGE TIMEOUT: command mungkin MASIH JALAN di VPS. Cek hasilnya dulu sebelum mengulang (jangan dobel kirim transaksi)."
+deadline = time.time() + 100  # tetap di bawah batas 2 menit tool Bash
+attempt = 0
+while True:
+    attempt += 1
+    req = urllib.request.Request(url + "/exec", data=json.dumps({"cmd": cmd, "timeout": 180}).encode(),
+        headers={"X-Token": os.environ["VPS_BRIDGE_TOKEN"], "Content-Type": "application/json"}, method="POST")
+    try:
+        resp = json.load(urllib.request.urlopen(req, timeout=200)); break
+    # Ulang HANYA kalau command pasti belum sampai ke VPS (tunnel mati / DNS / Cloudflare 502-530).
+    except urllib.error.HTTPError as e:
+        if e.code == 401: print("BRIDGE 401: token HP belum terdaftar, lihat bagian KALAU BRIDGE 401", file=sys.stderr); sys.exit(1)
+        if e.code in (504, 524): print(TIMEOUT_MSG, file=sys.stderr); sys.exit(1)
+        if e.code not in (502, 503, 520, 521, 522, 523, 530): print(f"BRIDGE ERROR HTTP {e.code}", file=sys.stderr); sys.exit(1)
+        why = f"HTTP {e.code}"
+    except (socket.timeout, TimeoutError):
+        print(TIMEOUT_MSG, file=sys.stderr); sys.exit(1)
+    except urllib.error.URLError as e:
+        if isinstance(e.reason, (socket.timeout, TimeoutError)): print(TIMEOUT_MSG, file=sys.stderr); sys.exit(1)
+        why = str(e.reason)
+    if time.time() > deadline:
+        print("BRIDGE DOWN: tunnel belum pulih. Tunggu 1 menit lalu ULANGI command yang sama (watchdog VPS2 restart tunnel otomatis, pulih maks ~5 menit).", file=sys.stderr); sys.exit(75)
+    print(f"[bridge] tunnel tidak bisa dihubungi ({why}), ambil URL terbaru & coba lagi (#{attempt})...", file=sys.stderr)
+    time.sleep(12)
+    url = fresh_url() or url
+sys.stdout.write(resp.get("stdout", ""))
 if resp.get("stderr"): sys.stderr.write(resp["stderr"])
 sys.exit(resp.get("exit", 0))
-' "$*"
+PY
 }
 export -f vps
 
@@ -50,7 +78,7 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 - **AWP validator** (wallet `0x9C98…`): di-spawn otomatis oleh gateway OpenClaw. **JANGAN restart gateway sembarangan** (validator ikut putus). Penjaga: `awp-validator-watcher.timer`, `awp-api-monitor.timer`.
 - **Fomoater auto-seller**: `fomo-seller.service` + `fomo-seller-watchdog.timer` — cek tiap 1 detik apakah Fomoater Pass (6 buah, soulbound) sudah bisa diperdagangkan; begitu bisa langsung terima offer OpenSea tertinggi **≥ $50**. **JANGAN dimatikan.** Log `/home/boss/fomo-bot/seller.log`, status `/home/boss/fomo-bot/seller_status.json`.
 - **Monitor pass**: `fomopass-monitor.timer` (notif Telegram).
-- **Bridge (akses HP)**: `vps-bridge.service` (Python :18790) + `vps-tunnel.service` (cloudflared quick tunnel) + `bridge-url-watchdog.timer` (publish URL ke repo ini).
+- **Bridge (akses HP)**: `vps-bridge.service` (Python :18790) + `vps-tunnel.service` (cloudflared quick tunnel) + `bridge-url-watchdog.timer` (tiap 1 menit: auto-restart bridge/tunnel yang mati + publish URL ke repo ini).
 - Lihat semua: `vps "systemctl list-units --type=service --state=running --no-pager"`.
 
 ## WALLET & KUNCI (JANGAN PERNAH tampilkan isinya ke chat)
@@ -88,7 +116,7 @@ Minta **kode daftar** ke owner (owner minta ke Claude laptop; kode 8 huruf, seka
 KODE="XXXX-XXXX"
 python3 -c '
 import os, sys, json, urllib.request
-req = urllib.request.Request(os.environ["VPS_BRIDGE_URL"] + "/enroll",
+req = urllib.request.Request(open("/tmp/vps_bridge_url").read().strip() + "/enroll",
     data=json.dumps({"code": sys.argv[1], "token": os.environ["VPS_BRIDGE_TOKEN"]}).encode(),
     headers={"Content-Type": "application/json"}, method="POST")
 try:
@@ -98,6 +126,8 @@ except Exception as e:
 ' "$KODE"
 ```
 
-## KALAU BRIDGE ERROR
-1. Re-run bootstrap (`git pull` dulu) — watchdog VPS2 publish URL baru maks ~2 menit setelah tunnel rotate.
-2. Kalau masih error >5 menit: tunnel/bridge mungkin mati. Minta user buka Claude Code di laptop (terhubung Tailscale ke VPS2) untuk cek `systemctl status vps-bridge vps-tunnel` dan `tail /var/log/bridge-watchdog.log`.
+## KALAU BRIDGE ERROR (JANGAN MENYERAH — pulihkan sendiri)
+- `vps` sudah otomatis retry ±100 dtk + ambil URL baru dari repo. Kalau keluar **`BRIDGE DOWN`** (exit 75): tunggu ±60 dtk (`sleep 60`), lalu **ulangi command yang sama**. Ulangi sampai ~6x (±6 menit). Jangan bilang ke user "tidak bisa" sebelum itu.
+- Di VPS2 watchdog (tiap 1 menit) otomatis: restart `vps-bridge` kalau bridge lokal mati, restart `vps-tunnel` kalau URL publik gagal 3x berturut-turut, lalu publish URL baru ke `bridge_url.txt`. Jadi pemulihan maks ~5 menit.
+- **`BRIDGE TIMEOUT`** ≠ tunnel mati: command mungkin masih jalan di VPS. Cek hasilnya dulu (log/status/tx) sebelum mengulang — terutama untuk transaksi.
+- Kalau tetap mati >10 menit: minta user buka Claude Code di laptop (terhubung Tailscale ke VPS2) untuk cek `systemctl status vps-bridge vps-tunnel` dan `tail /var/log/bridge-watchdog.log`.
