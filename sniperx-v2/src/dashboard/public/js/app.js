@@ -771,10 +771,10 @@ async function addNFTTarget() {
 
   if (selectedGasSpeed === 'custom') updateGasMultiplier();
 
-  const mintUrl = document.getElementById('nft-url').value.trim();
+  const mintUrl = '';
   const contractAddress = document.getElementById('nft-contract').value.trim();
 
-  if (!mintUrl && !contractAddress) return alert('Isi Mint URL atau Contract Address (minimal salah satu)');
+  if (!contractAddress) return alert('Isi Contract Address');
 
   let mintFunction, mintArgs;
   let collectionSlug = '';
