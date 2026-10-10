@@ -355,6 +355,7 @@ function updateGasMultiplier() {
 
 // === WALLET PICKER ===
 let selectedWalletSource = 'main';
+let botWalletAddresses = [];
 
 async function loadWalletPicker() {
   const data = await apiGet('/api/wallets');
@@ -364,6 +365,7 @@ async function loadWalletPicker() {
   const valAddr = data.validatorWallet;
   const botCount = data.evm?.total || 0;
   const botEnabled = data.evm?.enabled || 0;
+  botWalletAddresses = (data.evm?.wallets || []).filter(w => w.enabled).map(w => w.address);
 
   let html = '';
   if (mainAddr) {
@@ -386,6 +388,7 @@ async function loadWalletPicker() {
   }
   picker.innerHTML = html;
   document.getElementById('bot-count-row').classList.toggle('hidden', selectedWalletSource !== 'bot');
+  updateBotPreview();
 }
 
 function selectWallet(source) {
@@ -396,6 +399,18 @@ function selectWallet(source) {
   );
   if (clicked) clicked.classList.add('active');
   document.getElementById('bot-count-row').classList.toggle('hidden', source !== 'bot');
+  updateBotPreview();
+}
+
+function updateBotPreview() {
+  const el = document.getElementById('bot-preview');
+  if (!el) return;
+  if (selectedWalletSource !== 'bot') { el.innerHTML = ''; return; }
+  const count = Number(document.getElementById('nft-wallet-count').value) || 1;
+  const selected = botWalletAddresses.slice(0, count);
+  el.innerHTML = selected.map((a, i) =>
+    `<div style="font-size:11px;color:var(--text-dim);font-family:monospace;padding:2px 0">#${i} ${a.slice(0,6)}...${a.slice(-4)}</div>`
+  ).join('') + (count < botWalletAddresses.length ? `<div style="font-size:11px;color:var(--text-dim);padding:2px 0">... dan ${botWalletAddresses.length - count} lainnya</div>` : '');
 }
 
 // === AUTO-DETECT CHAIN ===
