@@ -490,13 +490,22 @@ function onMintModeChange() {
   const sdAllowlist = document.getElementById('sd-allowlist-fields');
   const infoEl = document.getElementById('seadrop-info');
 
+  const sdsFields = document.getElementById('seadrop-signed-fields');
+
   if (mode === 'direct') {
     directFields.classList.remove('hidden');
     seadropFields.classList.add('hidden');
+    sdsFields.classList.add('hidden');
     infoEl.textContent = '';
+  } else if (mode === 'seadrop-signed') {
+    directFields.classList.add('hidden');
+    seadropFields.classList.add('hidden');
+    sdsFields.classList.remove('hidden');
+    infoEl.innerHTML = '<span style="color:var(--green)">WL Signed mint via OpenSea Drops API. Butuh API key gratis.</span>';
   } else {
     directFields.classList.add('hidden');
     seadropFields.classList.remove('hidden');
+    sdsFields.classList.add('hidden');
     sdAllowlist.classList.toggle('hidden', mode !== 'seadrop-allowlist');
     querySeaDropInfo();
   }
@@ -553,12 +562,23 @@ async function addNFTTarget() {
   if (!mintUrl && !contractAddress) return alert('Isi Mint URL atau Contract Address (minimal salah satu)');
 
   let mintFunction, mintArgs;
+  let collectionSlug = '';
+  let openseaApiKey = '';
+
   if (mintMode === 'direct') {
     mintFunction = document.getElementById('nft-abi').value;
     mintArgs = document.getElementById('nft-args').value.split(',').map(a => {
       const n = Number(a.trim());
       return isNaN(n) ? a.trim() : n;
     });
+  } else if (mintMode === 'seadrop-signed') {
+    const qty = Number(document.getElementById('sds-quantity').value) || 1;
+    collectionSlug = document.getElementById('sds-slug').value.trim();
+    openseaApiKey = document.getElementById('sds-apikey').value.trim();
+    if (!collectionSlug) return alert('Isi Collection Slug (dari URL OpenSea)');
+    if (!openseaApiKey) return alert('Isi OpenSea API Key (gratis dari opensea.io/developers)');
+    mintFunction = 'seadrop-signed';
+    mintArgs = [qty];
   } else {
     const qty = Number(document.getElementById('sd-quantity').value) || 1;
     mintFunction = 'seadrop';
@@ -587,7 +607,9 @@ async function addNFTTarget() {
     scheduledTime,
     gasMultiplier: Number(document.getElementById('nft-gas-mult').value),
     mintMode,
-    merkleProof
+    merkleProof,
+    collectionSlug,
+    openseaApiKey
   };
 
   const res = await api('/api/sniper/nft/add-target', target);

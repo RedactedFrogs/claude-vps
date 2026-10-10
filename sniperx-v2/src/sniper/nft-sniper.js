@@ -38,6 +38,8 @@ export class NFTSniper extends EventEmitter {
       seadropFeeRecipient: target.seadropFeeRecipient || '',
       merkleProof: target.merkleProof || [],
       seadropMintParams: target.seadropMintParams || null,
+      collectionSlug: target.collectionSlug || '',
+      openseaApiKey: target.openseaApiKey || '',
       status: 'pending',
       label,
       createdAt: new Date().toISOString()
@@ -87,7 +89,13 @@ export class NFTSniper extends EventEmitter {
       this.txEngine.updateConfig({ gasMultiplier: target.gasMultiplier });
 
       let txBuilder;
-      if (target.mintMode === 'seadrop-public' || target.mintMode === 'seadrop-allowlist') {
+      if (target.mintMode === 'seadrop-signed') {
+        const slug = target.collectionSlug;
+        const apiKey = target.openseaApiKey;
+        if (!slug || !apiKey) throw new Error('seadrop-signed requires collectionSlug and openseaApiKey');
+        console.log(`[NFTSniper] SeaDrop SIGNED mode via OpenSea API (slug=${slug})`);
+        txBuilder = chain.buildSeaDropSignedMintTx(slug, apiKey, target.mintArgs?.[0] || 1);
+      } else if (target.mintMode === 'seadrop-public' || target.mintMode === 'seadrop-allowlist') {
         const sdMode = target.mintMode === 'seadrop-public' ? 'mintPublic' : 'mintAllowList';
         console.log(`[NFTSniper] SeaDrop mode: ${sdMode} via ${target.seadropAddress || '0x00005EA...'}`);
 

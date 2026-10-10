@@ -174,6 +174,35 @@ export class EVMChain {
     };
   }
 
+  async getOpenSeaMintTx(collectionSlug, minterAddress, quantity, apiKey) {
+    const url = `https://api.opensea.io/api/v2/drops/${collectionSlug}/mint`;
+    const body = JSON.stringify({ minter: minterAddress, quantity });
+    const resp = await fetch(url, {
+      method: 'POST',
+      headers: { 'X-API-KEY': apiKey, 'Content-Type': 'application/json' },
+      body
+    });
+    if (!resp.ok) {
+      const text = await resp.text();
+      throw new Error(`OpenSea API ${resp.status}: ${text}`);
+    }
+    return resp.json();
+  }
+
+  buildSeaDropSignedMintTx(collectionSlug, apiKey, quantity = 1) {
+    return async (signer) => {
+      const minter = await signer.getAddress();
+      console.log(`[SeaDrop] Requesting signed mint from OpenSea for ${minter}...`);
+      const mintData = await this.getOpenSeaMintTx(collectionSlug, minter, quantity, apiKey);
+      const target = mintData.target || mintData.to;
+      const calldata = mintData.calldata || mintData.data;
+      const value = mintData.value || '0';
+      if (!target || !calldata) throw new Error('OpenSea API returned invalid response: ' + JSON.stringify(mintData).slice(0, 200));
+      console.log(`[SeaDrop] Got signed TX: target=${target} value=${value} calldata=${calldata.slice(0, 20)}...`);
+      return { to: target, data: calldata, value };
+    };
+  }
+
   async querySeaDropInfo(nftContract, seadropAddr) {
     const provider = this.getProvider();
     const sd = new ethers.Contract(seadropAddr || SEADROP_ADDRESS, SEADROP_ABI, provider);
