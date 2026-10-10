@@ -357,6 +357,47 @@ function updateGasMultiplier() {
 let selectedWalletSource = 'main';
 let allBotWallets = [];
 let selectedBotIndices = new Set();
+let nftEligibilityData = null;
+
+function getNFTBadge(address) {
+  if (!nftEligibilityData?.wallets) return '';
+  const w = nftEligibilityData.wallets.find(x => x.address.toLowerCase() === address.toLowerCase());
+  if (!w) return '';
+  if (w.nftBalance > 0) return ` <span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(0,200,0,0.15);color:var(--green)">${w.nftBalance} minted</span>`;
+  return ` <span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(100,100,100,0.1);color:var(--text-dim)">0</span>`;
+}
+
+async function fetchNFTEligibility(chain, contract) {
+  const el = document.getElementById('nft-eligibility-info');
+  if (el) { el.classList.remove('hidden'); el.innerHTML = '<span style="color:var(--orange);font-size:12px">Checking wallets...</span>'; }
+  try {
+    const data = await api('/api/wl/check', { chain, contract });
+    if (data && !data.error) {
+      nftEligibilityData = data;
+      loadWalletPicker();
+      renderNFTEligibility();
+    }
+  } catch {}
+}
+
+function renderNFTEligibility() {
+  const el = document.getElementById('nft-eligibility-info');
+  if (!el || !nftEligibilityData) return;
+  const { wallets, seadrop, totalSupply, maxSupply } = nftEligibilityData;
+  const minted = wallets.filter(w => w.nftBalance > 0);
+  let html = '<div style="padding:8px 10px;border-radius:8px;background:var(--bg);font-size:12px">';
+  html += `Supply: <b>${totalSupply}</b>${maxSupply ? '/' + maxSupply : ''}`;
+  html += ` &middot; <span style="color:var(--green)">${minted.length} wallet sudah mint</span>`;
+  if (seadrop) {
+    if (seadrop.signers?.length > 0) html += ' &middot; <span style="color:var(--purple)">WL Signed</span>';
+    if (seadrop.publicDrop?.isActive) html += ' &middot; <span style="color:var(--green)">Public ACTIVE</span>';
+    else if (seadrop.publicDrop) html += ' &middot; <span style="color:var(--text-dim)">Public Inactive</span>';
+    if (seadrop.hasAllowList) html += ' &middot; <span style="color:var(--accent)">Allowlist</span>';
+  }
+  html += '</div>';
+  el.innerHTML = html;
+  el.classList.remove('hidden');
+}
 
 async function loadWalletPicker() {
   const data = await apiGet('/api/wallets');
@@ -377,19 +418,21 @@ async function loadWalletPicker() {
   if (mainAddr) {
     html += `<div class="wp-option ${selectedWalletSource === 'main' ? 'active' : ''}" onclick="selectWallet('main')">
       <div class="wp-radio"></div>
-      <div><div class="wp-name">Wallet Utama</div><div class="wp-addr">${mainAddr.slice(0,6)}...${mainAddr.slice(-4)}</div></div>
+      <div><div class="wp-name">Wallet Utama${getNFTBadge(mainAddr)}</div><div class="wp-addr">${mainAddr.slice(0,6)}...${mainAddr.slice(-4)}</div></div>
     </div>`;
   }
   if (valAddr) {
     html += `<div class="wp-option ${selectedWalletSource === 'validator' ? 'active' : ''}" onclick="selectWallet('validator')">
       <div class="wp-radio"></div>
-      <div><div class="wp-name">Wallet Validator</div><div class="wp-addr">${valAddr.slice(0,6)}...${valAddr.slice(-4)}</div></div>
+      <div><div class="wp-name">Wallet Validator${getNFTBadge(valAddr)}</div><div class="wp-addr">${valAddr.slice(0,6)}...${valAddr.slice(-4)}</div></div>
     </div>`;
   }
   if (botCount > 0) {
+    const botMinted = nftEligibilityData?.wallets?.filter(w => w.type === 'bot' && w.nftBalance > 0).length || 0;
+    const botBadge = nftEligibilityData ? ` <span style="font-size:10px;color:var(--green)">${botMinted} minted</span>` : '';
     html += `<div class="wp-option ${selectedWalletSource === 'bot' ? 'active' : ''}" onclick="selectWallet('bot')">
       <div class="wp-radio"></div>
-      <div><div class="wp-name">Bot Wallets</div><div class="wp-addr">${botEnabled}/${botCount} aktif</div></div>
+      <div><div class="wp-name">Bot Wallets${botBadge}</div><div class="wp-addr">${botEnabled}/${botCount} aktif</div></div>
     </div>`;
   }
   picker.innerHTML = html;
@@ -419,6 +462,7 @@ function renderBotList() {
       <div class="bw-check">${selectedBotIndices.has(w.index) ? '&#10003;' : ''}</div>
       <span class="bw-idx">#${w.index}</span>
       <span class="bw-addr">${w.address.slice(0,6)}...${w.address.slice(-4)}</span>
+      ${getNFTBadge(w.address)}
     </label>`
   ).join('');
   updateBotCounter();
@@ -474,6 +518,7 @@ async function detectChain(address) {
       const chainNames = data.chains.map(c => c.charAt(0).toUpperCase() + c.slice(1));
       status.innerHTML = `<span style="color:var(--green)">Found on: ${chainNames.join(', ')}</span>`;
       fetchGasPrice();
+      fetchNFTEligibility(data.primary, address);
     } else {
       status.innerHTML = '<span style="color:var(--text-dim)">Contract not found on any chain</span>';
     }
@@ -858,6 +903,7 @@ function onWLContractInput(val) {
         if (data && data.primary) {
           document.getElementById('wl-chain').value = data.primary;
           status.innerHTML = `<span style="color:var(--green)">Found on: ${data.chains.join(', ')}</span>`;
+          checkWL();
         } else {
           status.innerHTML = '<span style="color:var(--text-dim)">Contract not found</span>';
         }
