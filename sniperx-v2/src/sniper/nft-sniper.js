@@ -33,6 +33,11 @@ export class NFTSniper extends EventEmitter {
       scheduledTime: target.scheduledTime || null,
       slippage: target.slippage || 15,
       gasMultiplier: target.gasMultiplier || 1.5,
+      mintMode: target.mintMode || 'direct',
+      seadropAddress: target.seadropAddress || '',
+      seadropFeeRecipient: target.seadropFeeRecipient || '',
+      merkleProof: target.merkleProof || [],
+      seadropMintParams: target.seadropMintParams || null,
       status: 'pending',
       label,
       createdAt: new Date().toISOString()
@@ -77,17 +82,44 @@ export class NFTSniper extends EventEmitter {
       if (wallets.length === 0) throw new Error('No wallet available for mint');
 
       console.log(`[NFTSniper] Executing mint: ${target.label} with ${wallets.length} wallet(s) [${target.walletSource}]`);
-      console.log(`[NFTSniper] Contract: ${target.contractAddress} | Chain: ${target.chain} | Price: ${target.price} ETH`);
-      console.log(`[NFTSniper] ABI: ${target.mintFunction} | Args: ${JSON.stringify(target.mintArgs)}`);
+      console.log(`[NFTSniper] Contract: ${target.contractAddress} | Chain: ${target.chain} | Price: ${target.price} ETH | Mode: ${target.mintMode}`);
 
       this.txEngine.updateConfig({ gasMultiplier: target.gasMultiplier });
 
-      const txBuilder = chain.buildMintTx(
-        target.contractAddress,
-        target.mintFunction,
-        target.mintArgs,
-        target.price
-      );
+      let txBuilder;
+      if (target.mintMode === 'seadrop-public' || target.mintMode === 'seadrop-allowlist') {
+        const sdMode = target.mintMode === 'seadrop-public' ? 'mintPublic' : 'mintAllowList';
+        console.log(`[NFTSniper] SeaDrop mode: ${sdMode} via ${target.seadropAddress || '0x00005EA...'}`);
+
+        let feeRecipient = target.seadropFeeRecipient;
+        if (!feeRecipient && chain.querySeaDropInfo) {
+          try {
+            const info = await chain.querySeaDropInfo(target.contractAddress, target.seadropAddress);
+            feeRecipient = info.feeRecipients?.[0] || '0x0000000000000000000000000000000000000000';
+            console.log(`[NFTSniper] SeaDrop info: publicActive=${info.publicDrop?.isActive} feeRecipient=${feeRecipient} hasAllowList=${info.hasAllowList}`);
+          } catch (e) {
+            console.log(`[NFTSniper] SeaDrop query failed: ${e.message}, using zero address as feeRecipient`);
+            feeRecipient = '0x0000000000000000000000000000000000000000';
+          }
+        }
+
+        txBuilder = chain.buildSeaDropMintTx(target.contractAddress, sdMode, {
+          seadropAddress: target.seadropAddress,
+          quantity: target.mintArgs?.[0] || 1,
+          feeRecipient: feeRecipient || '0x0000000000000000000000000000000000000000',
+          mintPrice: target.price ? ethers.parseEther(target.price.toString()).toString() : '0',
+          mintParams: target.seadropMintParams,
+          proof: target.merkleProof
+        });
+      } else {
+        console.log(`[NFTSniper] Direct mode: ${target.mintFunction} | Args: ${JSON.stringify(target.mintArgs)}`);
+        txBuilder = chain.buildMintTx(
+          target.contractAddress,
+          target.mintFunction,
+          target.mintArgs,
+          target.price
+        );
+      }
 
       const result = await this.txEngine.executeEVMBatch(wallets, txBuilder, {
         chain: target.chain,

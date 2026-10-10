@@ -28,6 +28,17 @@ const PAIR_ABI = [
   'function token1() view returns (address)'
 ];
 
+const SEADROP_ABI = [
+  'function mintPublic(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity) payable',
+  'function mintAllowList(address nftContract, address feeRecipient, address minterIfNotPayer, uint256 quantity, tuple(uint256 mintPrice, uint256 maxTotalMintableByWallet, uint256 startTime, uint256 endTime, uint256 dropStageIndex, uint256 maxTokenSupplyForStage, uint256 feeBps, bool restrictFeeRecipients) mintParams, bytes32[] proof) payable',
+  'function getPublicDrop(address nftContract) view returns (tuple(uint80 mintPrice, uint48 startTime, uint48 endTime, uint16 maxTotalMintableByWallet, uint16 feeBps, bool restrictFeeRecipients))',
+  'function getAllowListMerkleRoot(address nftContract) view returns (bytes32)',
+  'function getAllowedFeeRecipients(address nftContract) view returns (address[])',
+  'function getSigners(address nftContract) view returns (address[])'
+];
+
+const SEADROP_ADDRESS = '0x00005EA00Ac477B1030CE78506496e8C2dE24bf5';
+
 export class EVMChain {
   constructor(rpcManager, chainKey, chainConfig) {
     this.rpcManager = rpcManager;
@@ -160,6 +171,84 @@ export class EVMChain {
         value: value ? ethers.parseEther(value.toString()) : 0n
       });
       return tx;
+    };
+  }
+
+  async querySeaDropInfo(nftContract, seadropAddr) {
+    const provider = this.getProvider();
+    const sd = new ethers.Contract(seadropAddr || SEADROP_ADDRESS, SEADROP_ABI, provider);
+    const [publicDrop, merkleRoot, feeRecipients, signers] = await Promise.all([
+      sd.getPublicDrop(nftContract).catch(() => null),
+      sd.getAllowListMerkleRoot(nftContract).catch(() => ethers.ZeroHash),
+      sd.getAllowedFeeRecipients(nftContract).catch(() => []),
+      sd.getSigners(nftContract).catch(() => [])
+    ]);
+
+    const now = Math.floor(Date.now() / 1000);
+    const pub = publicDrop ? {
+      mintPrice: publicDrop.mintPrice.toString(),
+      startTime: Number(publicDrop.startTime),
+      endTime: Number(publicDrop.endTime),
+      maxPerWallet: Number(publicDrop.maxTotalMintableByWallet),
+      feeBps: Number(publicDrop.feeBps),
+      restrictFeeRecipients: publicDrop.restrictFeeRecipients,
+      isActive: Number(publicDrop.startTime) <= now && Number(publicDrop.endTime) > now && Number(publicDrop.maxTotalMintableByWallet) > 0
+    } : null;
+
+    const hasAllowList = merkleRoot !== ethers.ZeroHash;
+
+    return {
+      publicDrop: pub,
+      hasAllowList,
+      merkleRoot,
+      feeRecipients,
+      signers,
+      recommended: pub?.isActive ? 'mintPublic' : hasAllowList ? 'mintAllowList' : 'mintPublic'
+    };
+  }
+
+  buildSeaDropMintTx(nftContract, mintMode, options = {}) {
+    const seadropAddr = options.seadropAddress || SEADROP_ADDRESS;
+    const quantity = options.quantity || 1;
+    const feeRecipient = options.feeRecipient || ethers.ZeroAddress;
+    const mintPrice = options.mintPrice || '0';
+
+    return async (signer) => {
+      const sd = new ethers.Contract(seadropAddr, SEADROP_ABI, signer);
+      const minter = await signer.getAddress();
+      const value = BigInt(mintPrice) * BigInt(quantity);
+
+      if (mintMode === 'mintPublic' || mintMode === 'public') {
+        const tx = await sd.mintPublic.populateTransaction(
+          nftContract, feeRecipient, ethers.ZeroAddress, quantity,
+          { value }
+        );
+        return tx;
+      }
+
+      if (mintMode === 'mintAllowList' || mintMode === 'allowlist') {
+        if (!options.mintParams) throw new Error('mintAllowList requires mintParams (startTime, endTime, etc)');
+        if (!options.proof || options.proof.length === 0) throw new Error('mintAllowList requires Merkle proof');
+        const mp = options.mintParams;
+        const mintParams = [
+          BigInt(mp.mintPrice || '0'),
+          BigInt(mp.maxTotalMintableByWallet || 1),
+          BigInt(mp.startTime || 0),
+          BigInt(mp.endTime || 0),
+          BigInt(mp.dropStageIndex || 0),
+          BigInt(mp.maxTokenSupplyForStage || 0),
+          BigInt(mp.feeBps || 0),
+          mp.restrictFeeRecipients ?? false
+        ];
+        const tx = await sd.mintAllowList.populateTransaction(
+          nftContract, feeRecipient, ethers.ZeroAddress, quantity,
+          mintParams, options.proof,
+          { value }
+        );
+        return tx;
+      }
+
+      throw new Error(`Unknown SeaDrop mint mode: ${mintMode}`);
     };
   }
 

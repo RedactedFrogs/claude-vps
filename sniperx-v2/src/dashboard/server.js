@@ -202,6 +202,19 @@ export class Dashboard {
         .catch(err => res.status(500).json({ ok: false, error: err.message }));
     });
 
+    // SeaDrop query endpoint
+    this.express.get('/api/seadrop/info/:chain/:nftContract', auth, async (req, res) => {
+      try {
+        const chain = this.app.evmChains[req.params.chain];
+        if (!chain) return res.status(400).json({ error: 'Unknown chain' });
+        if (!chain.querySeaDropInfo) return res.status(400).json({ error: 'Chain does not support SeaDrop' });
+        const info = await chain.querySeaDropInfo(req.params.nftContract, req.query.seadrop);
+        res.json(info);
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     // NFT Sniper endpoints
     this.express.get('/api/sniper/nft/targets', auth, (req, res) => {
       res.json(this.app.nftSniper.getTargets());

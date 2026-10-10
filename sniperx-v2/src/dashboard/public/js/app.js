@@ -483,11 +483,61 @@ async function detectChain(address) {
 }
 
 // === NFT SNIPER ===
+function onMintModeChange() {
+  const mode = document.getElementById('nft-mint-mode').value;
+  const directFields = document.getElementById('direct-fields');
+  const seadropFields = document.getElementById('seadrop-fields');
+  const sdAllowlist = document.getElementById('sd-allowlist-fields');
+  const infoEl = document.getElementById('seadrop-info');
+
+  if (mode === 'direct') {
+    directFields.classList.remove('hidden');
+    seadropFields.classList.add('hidden');
+    infoEl.textContent = '';
+  } else {
+    directFields.classList.add('hidden');
+    seadropFields.classList.remove('hidden');
+    sdAllowlist.classList.toggle('hidden', mode !== 'seadrop-allowlist');
+    querySeaDropInfo();
+  }
+}
+
+async function querySeaDropInfo() {
+  const chain = document.getElementById('nft-chain').value;
+  const contract = document.getElementById('nft-contract').value.trim();
+  const infoEl = document.getElementById('seadrop-info');
+  if (!contract || !/^0x[a-fA-F0-9]{40}$/.test(contract)) {
+    infoEl.innerHTML = '<span style="color:var(--orange)">Isi contract address dulu</span>';
+    return;
+  }
+  infoEl.innerHTML = '<span style="color:var(--orange)">Querying SeaDrop...</span>';
+  try {
+    const data = await apiGet(`/api/seadrop/info/${chain}/${contract}`);
+    if (!data) return;
+    let html = '';
+    if (data.publicDrop) {
+      const p = data.publicDrop;
+      const priceEth = (Number(p.mintPrice) / 1e18).toFixed(4);
+      html += `Public: ${p.isActive ? '<span style="color:var(--green)">ACTIVE</span>' : '<span style="color:var(--red)">inactive</span>'} · ${priceEth} ETH · max ${p.maxPerWallet}/wallet`;
+      if (p.startTime) {
+        const start = new Date(p.startTime * 1000).toLocaleString('id-ID');
+        const end = new Date(p.endTime * 1000).toLocaleString('id-ID');
+        html += `<br>Period: ${start} - ${end}`;
+      }
+    } else {
+      html += 'Public mint: not configured';
+    }
+    html += `<br>AllowList: ${data.hasAllowList ? '<span style="color:var(--green)">YES</span>' : 'no'}`;
+    html += ` · Fee recipients: ${data.feeRecipients?.length || 0}`;
+    html += ` · Recommended: <b>${data.recommended}</b>`;
+    infoEl.innerHTML = html;
+  } catch (e) {
+    infoEl.innerHTML = `<span style="color:var(--red)">Error: ${e.message || 'failed'}</span>`;
+  }
+}
+
 async function addNFTTarget() {
-  const args = document.getElementById('nft-args').value.split(',').map(a => {
-    const n = Number(a.trim());
-    return isNaN(n) ? a.trim() : n;
-  });
+  const mintMode = document.getElementById('nft-mint-mode').value;
 
   const scheduleInput = document.getElementById('nft-schedule').value;
   let scheduledTime = null;
@@ -502,23 +552,47 @@ async function addNFTTarget() {
 
   if (!mintUrl && !contractAddress) return alert('Isi Mint URL atau Contract Address (minimal salah satu)');
 
+  let mintFunction, mintArgs;
+  if (mintMode === 'direct') {
+    mintFunction = document.getElementById('nft-abi').value;
+    mintArgs = document.getElementById('nft-args').value.split(',').map(a => {
+      const n = Number(a.trim());
+      return isNaN(n) ? a.trim() : n;
+    });
+  } else {
+    const qty = Number(document.getElementById('sd-quantity').value) || 1;
+    mintFunction = 'seadrop';
+    mintArgs = [qty];
+  }
+
+  let merkleProof = [];
+  if (mintMode === 'seadrop-allowlist') {
+    const proofStr = document.getElementById('sd-proof').value.trim();
+    if (proofStr) {
+      try { merkleProof = JSON.parse(proofStr); }
+      catch { return alert('Merkle proof harus JSON array valid'); }
+    }
+  }
+
   const target = {
     mintUrl: mintUrl || undefined,
     chain: document.getElementById('nft-chain').value,
     contractAddress: contractAddress || undefined,
-    mintFunction: document.getElementById('nft-abi').value,
-    mintArgs: args,
+    mintFunction,
+    mintArgs,
     price: document.getElementById('nft-price').value,
     walletSource: selectedWalletSource,
     walletCount: selectedWalletSource === 'bot' ? selectedBotIndices.size : 1,
     walletIndices: selectedWalletSource === 'bot' ? [...selectedBotIndices] : null,
     scheduledTime,
-    gasMultiplier: Number(document.getElementById('nft-gas-mult').value)
+    gasMultiplier: Number(document.getElementById('nft-gas-mult').value),
+    mintMode,
+    merkleProof
   };
 
   const res = await api('/api/sniper/nft/add-target', target);
   if (res.ok) {
-    addFeed(`NFT target saved: ${res.target.label}`, 'green');
+    addFeed(`NFT target saved: ${res.target.label} [${mintMode}]`, 'green');
     loadNFTTargets();
   }
   return res;
@@ -568,6 +642,7 @@ async function loadNFTTargets() {
       ${t.contractAddress ? `<div class="target-meta" style="font-family:monospace;font-size:11px">${t.contractAddress}</div>` : ''}
       <div class="target-meta">
         ${t.chain} · ${t.walletSource === 'main' ? 'Wallet Utama' : t.walletSource === 'validator' ? 'Wallet Validator' : (t.walletIndices?.length || t.walletCount) + ' bot wallets'} · ${t.price} ETH · gas ${t.gasMultiplier}x
+        ${t.mintMode && t.mintMode !== 'direct' ? ' · <span style="color:var(--purple)">' + t.mintMode + '</span>' : ''}
         ${t.scheduledTime ? '<br>Scheduled: ' + new Date(t.scheduledTime).toLocaleString('id-ID') : ''}
       </div>
       <div class="target-actions">

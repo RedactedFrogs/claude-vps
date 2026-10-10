@@ -242,12 +242,35 @@
             <div id="chain-detect-status" style="font-size:12px;color:var(--text-dim);margin-top:4px"></div>
           </div>
           <div class="form-group">
-            <label>Mint Function ABI</label>
-            <input type="text" id="nft-abi" value="function mint(uint256 quantity) payable" placeholder="function mint(uint256) payable">
+            <label>Mint Mode</label>
+            <select id="nft-mint-mode" onchange="onMintModeChange()">
+              <option value="direct">Direct (custom ABI)</option>
+              <option value="seadrop-public">SeaDrop — Public Mint</option>
+              <option value="seadrop-allowlist">SeaDrop — Allowlist (Merkle)</option>
+            </select>
+            <div id="seadrop-info" style="font-size:12px;color:var(--text-dim);margin-top:4px"></div>
           </div>
-          <div class="form-group">
-            <label>Mint Args (comma-separated)</label>
-            <input type="text" id="nft-args" value="1" placeholder="1">
+          <div id="direct-fields">
+            <div class="form-group">
+              <label>Mint Function ABI</label>
+              <input type="text" id="nft-abi" value="function mint(uint256 quantity) payable" placeholder="function mint(uint256) payable">
+            </div>
+            <div class="form-group">
+              <label>Mint Args (comma-separated)</label>
+              <input type="text" id="nft-args" value="1" placeholder="1">
+            </div>
+          </div>
+          <div id="seadrop-fields" class="hidden">
+            <div class="form-group">
+              <label>Quantity</label>
+              <input type="number" id="sd-quantity" value="1" min="1">
+            </div>
+            <div id="sd-allowlist-fields" class="hidden">
+              <div class="form-group">
+                <label>Merkle Proof (JSON array, dari project)</label>
+                <input type="text" id="sd-proof" placeholder='["0x123...","0xabc..."]'>
+              </div>
+            </div>
           </div>
           <div class="form-group">
             <label>Price (ETH)</label>
