@@ -947,7 +947,7 @@ async function checkWL() {
     const data = await api('/api/wl/check', { chain, contract });
     if (data.error) { tableEl.innerHTML = `<div class="feed-empty" style="color:var(--red)">${data.error}</div>`; return; }
 
-    wlCheckState = { wallets: data.wallets, slug, apiKey, chain };
+    wlCheckState = { wallets: data.wallets, slug, apiKey, chain, seadrop: data.seadrop };
 
     const phaseCard = document.getElementById('wl-phase-info');
     const phaseEl = document.getElementById('wl-phase-content');
@@ -981,10 +981,14 @@ async function checkWL() {
       phaseCard.classList.add('hidden');
     }
 
-    renderWLTable(data.wallets, slug, apiKey);
+    renderWLTable(data.wallets, slug, apiKey, data.seadrop);
 
     const minted = data.wallets.filter(w => w.nftBalance > 0);
     document.getElementById('wl-summary').textContent = `${minted.length} sudah mint`;
+
+    if (slug && apiKey && (data.seadrop?.signers?.length > 0 || data.seadrop?.hasAllowList)) {
+      checkAllWL();
+    }
   } catch (e) {
     tableEl.innerHTML = `<div class="feed-empty" style="color:var(--red)">Error: ${e.message}</div>`;
   } finally {
@@ -993,16 +997,23 @@ async function checkWL() {
   }
 }
 
-function renderWLTable(wallets, slug, apiKey) {
+function renderWLTable(wallets, slug, apiKey, seadrop) {
   const tableEl = document.getElementById('wl-table');
   const hasWLCheck = slug && apiKey;
+  const pubDrop = seadrop?.publicDrop;
+  const hasWLSigned = seadrop?.signers?.length > 0;
+  const hasAllowList = seadrop?.hasAllowList;
+  const showWLCol = hasWLSigned || hasAllowList;
 
   let html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">';
   html += '<thead><tr style="border-bottom:1px solid var(--border);text-align:left">';
   html += '<th style="padding:8px 4px">Wallet</th>';
   html += '<th style="padding:8px 4px;text-align:center">NFT</th>';
-  if (hasWLCheck) html += '<th style="padding:8px 4px;text-align:center">WL</th>';
+  if (pubDrop) html += '<th style="padding:8px 4px;text-align:center">Public</th>';
+  if (showWLCol) html += '<th style="padding:8px 4px;text-align:center">WL</th>';
   html += '</tr></thead><tbody>';
+
+  let eligiblePublic = 0;
 
   for (const w of wallets) {
     const addrShort = `${w.address.slice(0,6)}...${w.address.slice(-4)}`;
@@ -1010,30 +1021,65 @@ function renderWLTable(wallets, slug, apiKey) {
       ? `<span style="color:var(--green);font-weight:bold">${w.nftBalance}</span>`
       : '<span style="color:var(--text-dim)">0</span>';
     const labelColor = w.type === 'main' ? 'var(--accent)' : w.type === 'validator' ? 'var(--purple)' : 'var(--text)';
+
     html += `<tr style="border-bottom:1px solid var(--border)">`;
     html += `<td style="padding:6px 4px"><span style="color:${labelColor};font-weight:600;font-size:12px">${w.label}</span><br><span style="font-family:monospace;font-size:11px;color:var(--text-dim)">${addrShort}</span></td>`;
     html += `<td style="padding:6px 4px;text-align:center">${nftBadge}</td>`;
-    if (hasWLCheck) {
+
+    if (pubDrop) {
+      if (pubDrop.isActive) {
+        if (w.nftBalance < pubDrop.maxPerWallet) {
+          eligiblePublic++;
+          html += `<td style="padding:6px 4px;text-align:center"><span style="background:rgba(0,200,100,0.15);color:var(--green);padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold">Eligible</span></td>`;
+        } else {
+          html += `<td style="padding:6px 4px;text-align:center"><span style="background:rgba(255,60,60,0.15);color:var(--red);padding:2px 8px;border-radius:4px;font-size:11px">Penuh</span></td>`;
+        }
+      } else {
+        const startMs = pubDrop.startTime ? pubDrop.startTime * 1000 : 0;
+        const now = Date.now();
+        if (startMs > now) {
+          const diff = startMs - now;
+          const h = Math.floor(diff / 3600000);
+          const m = Math.floor((diff % 3600000) / 60000);
+          html += `<td style="padding:6px 4px;text-align:center"><span style="color:var(--orange);font-size:11px">${h}j ${m}m lagi</span></td>`;
+        } else {
+          html += `<td style="padding:6px 4px;text-align:center"><span style="color:var(--text-dim);font-size:11px">Inactive</span></td>`;
+        }
+      }
+    }
+
+    if (showWLCol) {
       html += `<td style="padding:6px 4px;text-align:center" id="wl-s-${w.address.slice(2,10)}">`;
-      html += `<button class="btn btn-sm" style="font-size:11px;padding:3px 8px" onclick="checkSingleWL('${w.address}')">Cek</button>`;
+      if (hasWLCheck) {
+        html += `<span style="color:var(--orange);font-size:11px">⏳</span>`;
+      } else {
+        html += `<span style="color:var(--text-dim);font-size:11px">—</span>`;
+      }
       html += `</td>`;
     }
+
     html += `</tr>`;
   }
 
   html += '</tbody></table></div>';
 
-  if (hasWLCheck) {
-    html += `<button class="btn btn-full mt-10" onclick="checkAllWL()" id="wl-check-all-btn">Cek WL Semua Wallet</button>`;
+  if (showWLCol && !hasWLCheck) {
+    html += `<div style="text-align:center;padding:10px;font-size:12px;color:var(--orange)">Isi Collection Slug + OpenSea API Key di atas untuk cek eligibility WL</div>`;
   }
 
   tableEl.innerHTML = html;
+
+  const summaryEl = document.getElementById('wl-summary');
+  const minted = wallets.filter(w => w.nftBalance > 0).length;
+  let sumText = `${minted} sudah mint`;
+  if (pubDrop?.isActive) sumText += ` · ${eligiblePublic} eligible public`;
+  summaryEl.innerHTML = sumText;
 }
 
 async function checkSingleWL(address) {
   const el = document.getElementById(`wl-s-${address.slice(2,10)}`);
-  if (!el) return;
-  el.innerHTML = '<span style="color:var(--orange)">...</span>';
+  if (!el) return false;
+  el.innerHTML = '<span style="color:var(--orange);font-size:11px">⏳</span>';
   try {
     const res = await api('/api/wl/check-wl', {
       chain: wlCheckState.chain,
@@ -1042,23 +1088,37 @@ async function checkSingleWL(address) {
       address
     });
     if (res.eligible) {
-      el.innerHTML = '<span style="color:var(--green);font-weight:bold">WL &#10003;</span>';
+      el.innerHTML = '<span style="background:rgba(0,200,100,0.15);color:var(--green);padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold">Eligible ✓</span>';
+      return true;
     } else {
-      el.innerHTML = '<span style="color:var(--red)">No</span>';
+      el.innerHTML = '<span style="background:rgba(255,60,60,0.15);color:var(--red);padding:2px 8px;border-radius:4px;font-size:11px">Tidak</span>';
+      return false;
     }
   } catch {
-    el.innerHTML = '<span style="color:var(--red)">Err</span>';
+    el.innerHTML = '<span style="color:var(--red);font-size:11px">Error</span>';
+    return false;
   }
 }
 
 async function checkAllWL() {
-  const btn = document.getElementById('wl-check-all-btn');
-  if (btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
+  let eligible = 0;
   for (const w of wlCheckState.wallets) {
-    await checkSingleWL(w.address);
+    const ok = await checkSingleWL(w.address);
+    if (ok) eligible++;
     await new Promise(r => setTimeout(r, 300));
   }
-  if (btn) { btn.disabled = false; btn.textContent = 'Cek WL Semua Wallet'; }
+  const summaryEl = document.getElementById('wl-summary');
+  if (summaryEl) {
+    const minted = wlCheckState.wallets.filter(w => w.nftBalance > 0).length;
+    let txt = `${minted} sudah mint`;
+    const pubDrop = wlCheckState.seadrop?.publicDrop;
+    if (pubDrop?.isActive) {
+      const eligPub = wlCheckState.wallets.filter(w => w.nftBalance < pubDrop.maxPerWallet).length;
+      txt += ` · ${eligPub} eligible public`;
+    }
+    txt += ` · <span style="color:${eligible > 0 ? 'var(--green)' : 'var(--red)'}">${eligible} eligible WL</span>`;
+    summaryEl.innerHTML = txt;
+  }
 }
 
 // === SETTINGS ===
