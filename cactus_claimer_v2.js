@@ -18,7 +18,6 @@ const GAME_MS  = 38_000;
 const MAX_LOG  = 2 * 1024 * 1024;
 const LOG_FILE = '/home/boss/cactus_claimer.log';
 const STATUS_FILE = '/home/boss/cactus_claimer_status.json';
-const TURNSTILE_SITEKEY = '0x4AAAAAAFNblsMOxNKk_AyH';
 
 function log(msg) {
   const ts = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
@@ -106,97 +105,6 @@ async function connectCDP(port, retries = 8) {
   throw new Error('Cannot connect CDP after retries');
 }
 
-const STEALTH_PATCHES = `
-(function() {
-  // Override WebGL renderer to look like a real GPU
-  var origGetContext = HTMLCanvasElement.prototype.getContext;
-  HTMLCanvasElement.prototype.getContext = function(type, attrs) {
-    var ctx = origGetContext.call(this, type, attrs);
-    if (ctx && (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl')) {
-      var origGetParam = ctx.getParameter.bind(ctx);
-      var origGetExt = ctx.getExtension.bind(ctx);
-      ctx.getParameter = function(param) {
-        // UNMASKED_VENDOR_WEBGL = 0x9245, UNMASKED_RENDERER_WEBGL = 0x9246
-        if (param === 0x9245) return 'Google Inc. (NVIDIA)';
-        if (param === 0x9246) return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB Direct3D11 vs_5_0 ps_5_0, D3D11)';
-        return origGetParam(param);
-      };
-    }
-    return ctx;
-  };
-
-  // Ensure navigator.webdriver is properly hidden
-  Object.defineProperty(navigator, 'webdriver', {
-    get: function() { return false; },
-    configurable: true
-  });
-
-  // Override Permissions API to look normal
-  if (navigator.permissions) {
-    var origQuery = navigator.permissions.query.bind(navigator.permissions);
-    navigator.permissions.query = function(desc) {
-      if (desc.name === 'notifications') {
-        return Promise.resolve({ state: Notification.permission });
-      }
-      return origQuery(desc);
-    };
-  }
-
-  // Make chrome.runtime look real (without extension context it should exist but be limited)
-  if (window.chrome && !window.chrome.runtime) {
-    window.chrome.runtime = {
-      connect: function() { return {}; },
-      sendMessage: function() {},
-    };
-  }
-
-  // Override deviceMemory
-  Object.defineProperty(navigator, 'deviceMemory', {
-    get: function() { return 8; },
-    configurable: true
-  });
-})();
-`;
-
-const TURNSTILE_HOOK = `
-(function() {
-  window.__cactusToken = null;
-  window.__cactusTokenTime = 0;
-  window.__tsDebug = [];
-
-  var _check = setInterval(function() {
-    if (window.turnstile && typeof window.turnstile.render === 'function' && !window.turnstile.__cPatched) {
-      window.turnstile.__cPatched = true;
-      window.__tsDebug.push('patched_at_' + Date.now());
-      var origRender = window.turnstile.render;
-      window.turnstile.render = function(el, opts) {
-        window.__tsDebug.push('render_called_' + Date.now());
-        var newOpts = Object.assign({}, opts || {});
-        var origCb = newOpts.callback;
-        newOpts.callback = function(token) {
-          window.__cactusToken = token;
-          window.__cactusTokenTime = Date.now();
-          window.__tsDebug.push('token_received_' + Date.now());
-          if (origCb) origCb(token);
-        };
-        if (!newOpts['error-callback']) {
-          newOpts['error-callback'] = function(e) {
-            window.__tsDebug.push('error_' + JSON.stringify(e) + '_' + Date.now());
-          };
-        }
-        if (!newOpts['timeout-callback']) {
-          newOpts['timeout-callback'] = function() {
-            window.__tsDebug.push('ts_timeout_' + Date.now());
-          };
-        }
-        return origRender.call(window.turnstile, el, newOpts);
-      };
-      clearInterval(_check);
-    }
-  }, 10);
-})();
-`;
-
 async function claimForWallet(wallet) {
   const tmpDir = `/tmp/cactus-chrome-${Date.now()}`;
   let chrome, xvfb;
@@ -207,7 +115,7 @@ async function claimForWallet(wallet) {
     await sleep(1000);
 
     const display = ':99';
-    xvfb = spawn('Xvfb', [display, '-screen', '0', '1280x720x24', '-nolisten', 'tcp'], {
+    xvfb = spawn('Xvfb', [display, '-screen', '0', '1920x1080x24', '-nolisten', 'tcp'], {
       stdio: 'ignore',
     });
     await sleep(1000);
@@ -217,13 +125,13 @@ async function claimForWallet(wallet) {
       '--disable-blink-features=AutomationControlled',
       `--remote-debugging-port=${CDP_PORT}`,
       `--user-data-dir=${tmpDir}`,
-      '--window-size=1280,720', '--no-first-run', '--disable-extensions',
+      '--window-size=1920,1080', '--no-first-run',
       '--disable-background-networking', '--disable-default-apps',
-      // WebGL via SwiftShader (critical for Turnstile)
       '--use-gl=angle',
       '--use-angle=swiftshader-webgl',
       '--enable-webgl',
       '--ignore-gpu-blocklist',
+      '--lang=en-US,en',
       'about:blank',
     ], {
       stdio: 'ignore',
@@ -235,9 +143,10 @@ async function claimForWallet(wallet) {
     await cdpSend(ws, 'Page.enable');
     await cdpSend(ws, 'Runtime.enable');
 
-    // Inject stealth patches BEFORE page loads
-    await cdpSend(ws, 'Page.addScriptToEvaluateOnNewDocument', { source: STEALTH_PATCHES });
-    await cdpSend(ws, 'Page.addScriptToEvaluateOnNewDocument', { source: TURNSTILE_HOOK });
+    // MINIMAL stealth: only override webdriver and UA, nothing else
+    await cdpSend(ws, 'Page.addScriptToEvaluateOnNewDocument', {
+      source: `Object.defineProperty(navigator, 'webdriver', {get: () => undefined});`
+    });
 
     await cdpSend(ws, 'Network.setUserAgentOverride', {
       userAgent: 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/154.0.8037.57 Safari/537.36',
@@ -245,16 +154,13 @@ async function claimForWallet(wallet) {
 
     log('  Opening game page...');
     await cdpSend(ws, 'Page.navigate', { url: 'https://cactusexe.cc/play' });
-    await sleep(6000);
+    await sleep(8000);
 
-    log('  Waiting for Turnstile solve...');
+    log('  Waiting for Turnstile token (clean approach)...');
     let token = null;
-    let manualRenderDone = false;
 
-    for (let i = 0; i < 45; i++) {
-      token = await cdpEval(ws, 'window.__cactusToken');
-      if (token) break;
-
+    for (let i = 0; i < 50; i++) {
+      // Check hidden input for token (Turnstile sets this automatically)
       token = await cdpEval(ws, `
         (function(){
           var inp = document.querySelector('input[name="cf-turnstile-response"]');
@@ -263,83 +169,99 @@ async function claimForWallet(wallet) {
       `);
       if (token) break;
 
-      if (i === 5) {
-        const tState = await cdpEval(ws, `JSON.stringify({
-          ts: typeof window.turnstile, patched: !!window.turnstile?.__cPatched,
+      // Also check turnstile.getResponse() if available
+      token = await cdpEval(ws, `
+        (function(){
+          if (window.turnstile && typeof window.turnstile.getResponse === 'function') {
+            try {
+              var r = window.turnstile.getResponse();
+              return r || null;
+            } catch(e) { return null; }
+          }
+          return null;
+        })()
+      `);
+      if (token) break;
+
+      if (i === 4) {
+        const state = await cdpEval(ws, `JSON.stringify({
+          ts: typeof window.turnstile,
           iframes: document.querySelectorAll('iframe').length,
-          widgetHTML: document.querySelector('[id*="turnstile"]')?.innerHTML?.slice(0,200) || 'none',
-          debug: window.__tsDebug?.join(',') || 'none'
+          widgetHTML: document.querySelector('[id*="turnstile"]')?.innerHTML?.slice(0,300) || 'none',
+          webgl: (function(){try{var c=document.createElement('canvas');var g=c.getContext('webgl');if(!g)return 'none';var d=g.getExtension('WEBGL_debug_renderer_info');return d?g.getParameter(d.UNMASKED_RENDERER_WEBGL)?.slice(0,60):'no_ext'}catch(e){return 'err'}})(),
+          webdriver: navigator.webdriver,
         })`);
-        log('  State@10s: ' + tState);
+        log('  State@8s: ' + state);
       }
 
-      if (i === 8 && !manualRenderDone) {
-        log('  Triggering manual Turnstile render...');
-        manualRenderDone = true;
-        const renderResult = await cdpEval(ws, `
-          (function() {
-            if (typeof window.turnstile !== 'object' || typeof window.turnstile.render !== 'function') {
-              return 'turnstile_not_ready';
-            }
+      if (i === 10) {
+        // Try turnstile.execute() on existing widget
+        const execResult = await cdpEval(ws, `
+          (function(){
+            if (!window.turnstile) return 'no_turnstile';
             var container = document.querySelector('[id*="turnstile"]');
-            if (!container) {
-              container = document.createElement('div');
-              container.id = 'manual-turnstile';
-              container.style.cssText = 'position:fixed;bottom:10px;right:10px;z-index:99999;width:300px;height:65px';
-              document.body.appendChild(container);
-            }
+            if (!container) return 'no_container';
             try {
-              var widgetId = window.turnstile.render(container, {
-                sitekey: '${TURNSTILE_SITEKEY}',
-                callback: function(token) {
-                  window.__cactusToken = token;
-                  window.__cactusTokenTime = Date.now();
-                  window.__tsDebug.push('manual_token_' + Date.now());
-                },
-                'error-callback': function(e) {
-                  window.__tsDebug.push('manual_error_' + JSON.stringify(e));
-                },
-                'timeout-callback': function() {
-                  window.__tsDebug.push('manual_timeout_' + Date.now());
-                }
-              });
-              return 'rendered_widget_' + widgetId;
-            } catch(e) {
-              return 'render_error: ' + e.message;
-            }
+              // Try execute
+              if (typeof window.turnstile.execute === 'function') {
+                window.turnstile.execute('#' + container.id);
+                return 'executed';
+              }
+              return 'no_execute_fn';
+            } catch(e) { return 'err:' + e.message; }
           })()
         `);
-        log('  Manual render: ' + renderResult);
+        log('  Execute@20s: ' + execResult);
+
+        // Try reset
+        const resetResult = await cdpEval(ws, `
+          (function(){
+            if (!window.turnstile || !window.turnstile.reset) return 'no_reset';
+            var widgets = document.querySelectorAll('[id^="cf-chl-widget"]');
+            if (widgets.length === 0) return 'no_widgets';
+            try {
+              // Get widget ID from container's child
+              var container = document.querySelector('[id*="turnstile"]');
+              var widgetId = container?.querySelector('[id^="cf-chl-widget"]')?.id?.replace('_response','');
+              if (widgetId) {
+                window.turnstile.reset(widgetId);
+                return 'reset_' + widgetId;
+              }
+              return 'no_widget_id';
+            } catch(e) { return 'err:' + e.message; }
+          })()
+        `);
+        log('  Reset@20s: ' + resetResult);
       }
 
-      if (i === 15) {
-        const debug = await cdpEval(ws, `JSON.stringify({
-          ts: typeof window.turnstile, patched: !!window.turnstile?.__cPatched,
+      if (i === 20) {
+        const state = await cdpEval(ws, `JSON.stringify({
+          ts: typeof window.turnstile,
           iframes: document.querySelectorAll('iframe').length,
           inp: (document.querySelector('input[name="cf-turnstile-response"]')||{}).value?.slice(0,30) || 'none',
           widgetHTML: document.querySelector('[id*="turnstile"]')?.innerHTML?.slice(0,300) || 'none',
-          debug: window.__tsDebug?.join(',') || 'none'
+          bodyClass: document.body?.className || 'none',
+          pageTitle: document.title,
         })`);
-        log('  State@30s: ' + debug);
+        log('  State@40s: ' + state);
       }
 
       await sleep(2000);
     }
 
     if (!token) {
-      log('  ERROR: Turnstile not solved after 90s');
+      log('  ERROR: Turnstile not solved after 100s');
       const debug = await cdpEval(ws, `JSON.stringify({
-        ts: typeof window.turnstile, patched: !!window.turnstile?.__cPatched,
-        token: window.__cactusToken,
+        ts: typeof window.turnstile,
+        token: window.turnstile?.getResponse?.() || null,
         iframes: document.querySelectorAll('iframe').length,
-        idDivs: document.querySelectorAll('[id*="turnstile"]').length,
         inp: (document.querySelector('input[name="cf-turnstile-response"]')||{}).value?.slice(0,30) || 'none',
-        debug: window.__tsDebug?.join(',') || 'none'
+        expired: window.turnstile?.isExpired?.() ?? 'n/a',
       })`);
       log('  Debug: ' + debug);
       return { ok: false, error: 'turnstile_timeout' };
     }
-    log('  Turnstile solved!');
+    log('  Turnstile solved! Token length: ' + token.length);
 
     log('  Starting game run...');
     const startResult = await cdpEval(ws, `
@@ -354,7 +276,7 @@ async function claimForWallet(wallet) {
           headers: {'Content-Type': 'application/json'},
           body: JSON.stringify({
             playSessionPubkey: pk,
-            turnstileToken: window.__cactusToken,
+            turnstileToken: window.turnstile.getResponse(),
             clientMeta: { ui: 'survival_runner_v1' }
           })
         });
@@ -406,7 +328,7 @@ async function claimForWallet(wallet) {
 }
 
 async function main() {
-  log(`=== CactusEXE Claimer v4 started === ${WALLETS.length} wallet(s)`);
+  log(`=== CactusEXE Claimer v5 started === ${WALLETS.length} wallet(s)`);
   saveStatus({ started: new Date().toISOString(), wallets: WALLETS.length, state: 'monitoring' });
 
   const claimed = new Set();
@@ -440,9 +362,6 @@ async function main() {
             claimed.add(wallet);
           } else {
             log(`FAILED: ${JSON.stringify(result)}`);
-            if (result?.error?.code === 'cooldown') {
-              log('  Cooldown active, skipping this wallet for now');
-            }
           }
 
           await sleep(5000);
