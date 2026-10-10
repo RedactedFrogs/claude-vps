@@ -355,7 +355,8 @@ function updateGasMultiplier() {
 
 // === WALLET PICKER ===
 let selectedWalletSource = 'main';
-let botWalletAddresses = [];
+let allBotWallets = [];
+let selectedBotIndices = new Set();
 
 async function loadWalletPicker() {
   const data = await apiGet('/api/wallets');
@@ -365,7 +366,12 @@ async function loadWalletPicker() {
   const valAddr = data.validatorWallet;
   const botCount = data.evm?.total || 0;
   const botEnabled = data.evm?.enabled || 0;
-  botWalletAddresses = (data.evm?.wallets || []).filter(w => w.enabled).map(w => w.address);
+  allBotWallets = (data.evm?.wallets || []).map((w, i) => ({ index: i, address: w.address, enabled: w.enabled }));
+
+  if (selectedBotIndices.size === 0 && allBotWallets.length > 0) {
+    const first = allBotWallets.find(w => w.enabled);
+    if (first) selectedBotIndices.add(first.index);
+  }
 
   let html = '';
   if (mainAddr) {
@@ -387,8 +393,8 @@ async function loadWalletPicker() {
     </div>`;
   }
   picker.innerHTML = html;
-  document.getElementById('bot-count-row').classList.toggle('hidden', selectedWalletSource !== 'bot');
-  updateBotPreview();
+  document.getElementById('bot-select-row').classList.toggle('hidden', selectedWalletSource !== 'bot');
+  renderBotList();
 }
 
 function selectWallet(source) {
@@ -398,19 +404,51 @@ function selectWallet(source) {
     el.getAttribute('onclick')?.includes(`'${source}'`)
   );
   if (clicked) clicked.classList.add('active');
-  document.getElementById('bot-count-row').classList.toggle('hidden', source !== 'bot');
-  updateBotPreview();
+  document.getElementById('bot-select-row').classList.toggle('hidden', source !== 'bot');
+  renderBotList();
 }
 
-function updateBotPreview() {
-  const el = document.getElementById('bot-preview');
+function renderBotList() {
+  const el = document.getElementById('bot-wallet-list');
   if (!el) return;
-  if (selectedWalletSource !== 'bot') { el.innerHTML = ''; return; }
-  const count = Number(document.getElementById('nft-wallet-count').value) || 1;
-  const selected = botWalletAddresses.slice(0, count);
-  el.innerHTML = selected.map((a, i) =>
-    `<div style="font-size:11px;color:var(--text-dim);font-family:monospace;padding:2px 0">#${i} ${a.slice(0,6)}...${a.slice(-4)}</div>`
-  ).join('') + (count < botWalletAddresses.length ? `<div style="font-size:11px;color:var(--text-dim);padding:2px 0">... dan ${botWalletAddresses.length - count} lainnya</div>` : '');
+  if (selectedWalletSource !== 'bot') { el.innerHTML = ''; updateBotCounter(); return; }
+  const enabled = allBotWallets.filter(w => w.enabled);
+  el.innerHTML = enabled.map(w =>
+    `<div class="bw-item ${selectedBotIndices.has(w.index) ? 'selected' : ''}" onclick="toggleBotWallet(${w.index})">
+      <div class="bw-check">${selectedBotIndices.has(w.index) ? '&#10003;' : ''}</div>
+      <span class="bw-idx">#${w.index}</span>
+      <span class="bw-addr">${w.address.slice(0,6)}...${w.address.slice(-4)}</span>
+    </div>`
+  ).join('');
+  updateBotCounter();
+}
+
+function toggleBotWallet(index) {
+  if (selectedBotIndices.has(index)) selectedBotIndices.delete(index);
+  else selectedBotIndices.add(index);
+  renderBotList();
+}
+
+function selectAllBots() {
+  allBotWallets.filter(w => w.enabled).forEach(w => selectedBotIndices.add(w.index));
+  renderBotList();
+}
+
+function deselectAllBots() {
+  selectedBotIndices.clear();
+  renderBotList();
+}
+
+function selectFirstNBots() {
+  const n = Number(document.getElementById('bot-select-n').value) || 1;
+  selectedBotIndices.clear();
+  allBotWallets.filter(w => w.enabled).slice(0, n).forEach(w => selectedBotIndices.add(w.index));
+  renderBotList();
+}
+
+function updateBotCounter() {
+  const el = document.getElementById('bot-selected-count');
+  if (el) el.textContent = `${selectedBotIndices.size} dipilih`;
 }
 
 // === AUTO-DETECT CHAIN ===
@@ -471,7 +509,8 @@ async function addNFTTarget() {
     mintArgs: args,
     price: document.getElementById('nft-price').value,
     walletSource: selectedWalletSource,
-    walletCount: Number(document.getElementById('nft-wallet-count').value),
+    walletCount: selectedWalletSource === 'bot' ? selectedBotIndices.size : 1,
+    walletIndices: selectedWalletSource === 'bot' ? [...selectedBotIndices] : null,
     scheduledTime,
     gasMultiplier: Number(document.getElementById('nft-gas-mult').value)
   };
@@ -518,7 +557,7 @@ async function loadNFTTargets() {
       ${t.mintUrl ? `<div class="target-meta"><a href="${t.mintUrl}" target="_blank" style="color:var(--accent);text-decoration:none">${t.mintUrl}</a></div>` : ''}
       ${t.contractAddress ? `<div class="target-meta" style="font-family:monospace;font-size:11px">${t.contractAddress}</div>` : ''}
       <div class="target-meta">
-        ${t.chain} · ${t.walletSource === 'main' ? 'Wallet Utama' : t.walletSource === 'validator' ? 'Wallet Validator' : t.walletCount + ' bot wallets'} · ${t.price} ETH · gas ${t.gasMultiplier}x
+        ${t.chain} · ${t.walletSource === 'main' ? 'Wallet Utama' : t.walletSource === 'validator' ? 'Wallet Validator' : (t.walletIndices?.length || t.walletCount) + ' bot wallets'} · ${t.price} ETH · gas ${t.gasMultiplier}x
         ${t.scheduledTime ? '<br>Scheduled: ' + new Date(t.scheduledTime).toLocaleString('id-ID') : ''}
       </div>
       <div class="target-actions">

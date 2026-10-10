@@ -63,11 +63,16 @@ export class NFTSniper extends EventEmitter {
 
     try {
       const provider = chain.getProvider();
-      const wallets = this.walletManager.getSignersForMint(
-        provider,
-        target.walletSource || 'bot',
-        target.walletCount || 1
-      );
+      let wallets;
+      if (target.walletSource === 'bot' && target.walletIndices?.length > 0) {
+        wallets = this.walletManager.getEVMSigners(provider, target.walletIndices);
+      } else {
+        wallets = this.walletManager.getSignersForMint(
+          provider,
+          target.walletSource || 'bot',
+          target.walletCount || 1
+        );
+      }
 
       if (wallets.length === 0) throw new Error('No wallet available for mint');
 

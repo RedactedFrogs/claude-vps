@@ -351,6 +351,25 @@ input:checked + .slider::before { transform: translateX(20px); }
 .wp-name { font-size: 14px; font-weight: 600; }
 .wp-addr { font-size: 11px; color: var(--text-dim); font-family: monospace; }
 
+/* Bot wallet selector */
+.bot-wallet-list { max-height: 200px; overflow-y: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg); }
+.bw-item {
+  display: flex; align-items: center; gap: 8px;
+  padding: 7px 10px; cursor: pointer; transition: background 0.15s;
+  border-bottom: 1px solid var(--border);
+}
+.bw-item:last-child { border-bottom: none; }
+.bw-item:active { background: rgba(59,130,246,0.12); }
+.bw-item.selected { background: rgba(59,130,246,0.08); }
+.bw-check {
+  width: 18px; height: 18px; border: 2px solid var(--border); border-radius: 4px;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; color: #fff; flex-shrink: 0;
+}
+.bw-item.selected .bw-check { background: var(--accent); border-color: var(--accent); }
+.bw-idx { font-size: 11px; color: var(--text-dim); width: 24px; }
+.bw-addr { font-size: 12px; color: var(--text); font-family: monospace; }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-track { background: transparent; }
