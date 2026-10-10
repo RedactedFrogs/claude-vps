@@ -4,7 +4,7 @@
 /* cactus_claimer.js — Auto-claim CactusEXE whitelist spots
  * Monitors /api/spots, auto-plays when slots open via Chrome CDP
  * Usage: node cactus_claimer.js <solana_wallet_1> [wallet_2] ...
- * Requires: Chrome, Xvfb, Node 22+
+ * Requires: Chrome, Node 22+
  */
 
 const { spawn, execSync } = require('child_process');
@@ -146,15 +146,9 @@ async function claimForWallet(wallet) {
   let chrome, xvfb;
 
   try {
-    // Launch Xvfb on a random display
-    const display = ':' + (50 + Math.floor(Math.random() * 50));
-    xvfb = spawn('Xvfb', [display, '-screen', '0', '1280x720x24', '-ac'], {
-      stdio: 'ignore'
-    });
-    await sleep(1000);
-
-    // Launch Chrome with the virtual display
+    // Launch Chrome in headless mode (no Xvfb needed)
     chrome = spawn('google-chrome', [
+      '--headless=new',
       '--no-sandbox',
       '--disable-gpu',
       '--disable-dev-shm-usage',
@@ -169,7 +163,6 @@ async function claimForWallet(wallet) {
       'about:blank',
     ], {
       stdio: 'ignore',
-      env: { ...process.env, DISPLAY: display },
     });
     await sleep(3000);
 
