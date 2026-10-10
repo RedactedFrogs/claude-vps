@@ -371,13 +371,26 @@ async function fetchNFTEligibility(chain, contract) {
   const el = document.getElementById('nft-eligibility-info');
   if (el) { el.classList.remove('hidden'); el.innerHTML = '<span style="color:var(--orange);font-size:12px">Checking wallets...</span>'; }
   try {
-    const data = await api('/api/wl/check', { chain, contract });
+    const controller = new AbortController();
+    const tid = setTimeout(() => controller.abort(), 35000);
+    const res = await fetch('/api/wl/check', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'X-Token': token },
+      body: JSON.stringify({ chain, contract }),
+      signal: controller.signal
+    });
+    clearTimeout(tid);
+    const data = await res.json();
     if (data && !data.error) {
       nftEligibilityData = data;
       loadWalletPicker();
       renderNFTEligibility();
+    } else {
+      if (el) el.innerHTML = `<span style="color:var(--red);font-size:12px">${data.error || 'Check gagal'}</span>`;
     }
-  } catch {}
+  } catch (e) {
+    if (el) el.innerHTML = `<span style="color:var(--red);font-size:12px">${e.name === 'AbortError' ? 'Timeout — RPC terlalu lambat' : 'Check gagal'}</span>`;
+  }
 }
 
 function renderNFTEligibility() {

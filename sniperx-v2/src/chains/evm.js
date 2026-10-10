@@ -210,14 +210,24 @@ export class EVMChain {
       'function totalSupply() view returns (uint256)',
       'function maxSupply() view returns (uint256)'
     ], provider);
-    const results = await Promise.allSettled(
-      walletAddresses.map(addr => nft.balanceOf(addr).then(b => Number(b)))
-    );
+    const withTimeout = (promise, ms) => Promise.race([
+      promise,
+      new Promise((_, rej) => setTimeout(() => rej(new Error('timeout')), ms))
+    ]);
+    const BATCH = 10;
+    const allBalances = [];
+    for (let i = 0; i < walletAddresses.length; i += BATCH) {
+      const batch = walletAddresses.slice(i, i + BATCH);
+      const results = await Promise.allSettled(
+        batch.map(addr => withTimeout(nft.balanceOf(addr).then(b => Number(b)), 8000))
+      );
+      allBalances.push(...results);
+    }
     let totalSupply = 0, maxSupply = 0;
-    try { totalSupply = Number(await nft.totalSupply()); } catch {}
-    try { maxSupply = Number(await nft.maxSupply()); } catch {}
+    try { totalSupply = Number(await withTimeout(nft.totalSupply(), 8000)); } catch {}
+    try { maxSupply = Number(await withTimeout(nft.maxSupply(), 8000)); } catch {}
     return {
-      balances: results.map((r, i) => ({
+      balances: allBalances.map((r, i) => ({
         address: walletAddresses[i],
         balance: r.status === 'fulfilled' ? r.value : 0
       })),

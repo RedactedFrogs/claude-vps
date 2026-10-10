@@ -32,7 +32,7 @@ export class RPCManager {
 
     this.providers[chainKey] = rpcs.map(r => ({
       ...r,
-      provider: new ethers.JsonRpcProvider(r.url, chainConfig.chainId),
+      provider: new ethers.JsonRpcProvider(r.url, chainConfig.chainId, { staticNetwork: true }),
       failures: 0,
       lastUsed: 0
     }));

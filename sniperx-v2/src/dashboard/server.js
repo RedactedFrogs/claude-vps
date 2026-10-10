@@ -217,11 +217,14 @@ export class Dashboard {
 
     // WL Check - NFT balances for all wallets
     this.express.post('/api/wl/check', auth, async (req, res) => {
+      const timeout = setTimeout(() => {
+        if (!res.headersSent) res.status(504).json({ error: 'RPC timeout — chain mungkin tidak bisa dijangkau' });
+      }, 30000);
       try {
         const { chain: chainKey, contract } = req.body;
-        if (!chainKey || !contract) return res.status(400).json({ error: 'chain and contract required' });
+        if (!chainKey || !contract) { clearTimeout(timeout); return res.status(400).json({ error: 'chain and contract required' }); }
         const chain = this.app.evmChains[chainKey];
-        if (!chain) return res.status(400).json({ error: 'Unknown chain: ' + chainKey });
+        if (!chain) { clearTimeout(timeout); return res.status(400).json({ error: 'Unknown chain: ' + chainKey }); }
 
         const summary = this.app.walletManager.getSummary();
         const wallets = [];
@@ -242,9 +245,11 @@ export class Dashboard {
         let seadrop = null;
         try { seadrop = await chain.querySeaDropInfo(contract); } catch {}
 
-        res.json({ wallets: result, seadrop, totalSupply, maxSupply });
+        clearTimeout(timeout);
+        if (!res.headersSent) res.json({ wallets: result, seadrop, totalSupply, maxSupply });
       } catch (err) {
-        res.status(500).json({ error: err.message });
+        clearTimeout(timeout);
+        if (!res.headersSent) res.status(500).json({ error: err.message });
       }
     });
 
