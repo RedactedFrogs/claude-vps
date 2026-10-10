@@ -96,9 +96,10 @@ async function cdpEval(ws, expr, awaitPromise = false) {
 async function connectCDP(port, retries = 8) {
   for (let i = 0; i < retries; i++) {
     try {
-      const info = await httpGet(`http://127.0.0.1:${port}/json/version`);
-      const wsUrl = info.webSocketDebuggerUrl;
-      if (!wsUrl) throw new Error('No wsUrl');
+      const targets = await httpGet(`http://127.0.0.1:${port}/json/list`);
+      const page = Array.isArray(targets) && targets.find(t => t.type === 'page');
+      const wsUrl = page?.webSocketDebuggerUrl;
+      if (!wsUrl) throw new Error('No page target found');
       return new Promise((resolve, reject) => {
         const ws = new WebSocket(wsUrl);
         ws.addEventListener('open', () => resolve(ws));
