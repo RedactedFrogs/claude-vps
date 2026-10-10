@@ -410,6 +410,18 @@ function getNFTBadge(address) {
   return badges;
 }
 
+async function autoDetectSlug(chain, contract) {
+  const existing = getWLSlugAndKey();
+  if (existing?.slug) return;
+  try {
+    const data = await apiGet(`/api/opensea/slug/${chain}/${contract}`);
+    if (data?.slug) {
+      ['sds-slug', 'wl-slug'].forEach(id => { const el = document.getElementById(id); if (el) el.value = data.slug; });
+      autoSaveConfig();
+    }
+  } catch {}
+}
+
 async function fetchNFTEligibility(chain, contract) {
   const el = document.getElementById('nft-eligibility-info');
   if (el) { el.classList.remove('hidden'); el.innerHTML = '<span style="color:var(--orange);font-size:12px">Checking wallets...</span>'; }
@@ -428,6 +440,7 @@ async function fetchNFTEligibility(chain, contract) {
       nftEligibilityData = data;
       loadWalletPicker();
       renderNFTEligibility();
+      await autoDetectSlug(chain, contract);
       checkNFTWalletEligibility();
     } else {
       if (el) el.innerHTML = `<span style="color:var(--red);font-size:12px">${data.error || 'Check gagal'}</span>`;

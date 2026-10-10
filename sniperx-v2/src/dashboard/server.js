@@ -62,6 +62,28 @@ export class Dashboard {
       res.json({ ok: true });
     });
 
+    // Auto-detect collection slug from contract via OpenSea
+    const osChainMap = { ethereum: 'ethereum', base: 'base', arbitrum: 'arbitrum', optimism: 'optimism', polygon: 'matic', avalanche: 'avalanche', robinhood: 'robin_hood', bsc: 'bsc', zora: 'zora' };
+    this.express.get('/api/opensea/slug/:chain/:contract', auth, async (req, res) => {
+      try {
+        const cfg = loadConfig();
+        const apiKey = cfg.openseaApiKey;
+        if (!apiKey) return res.json({ error: 'API key belum disimpan' });
+        const osChain = osChainMap[req.params.chain] || req.params.chain;
+        const url = `https://api.opensea.io/api/v2/chain/${osChain}/contract/${req.params.contract}`;
+        const resp = await fetch(url, { headers: { 'X-API-KEY': apiKey } });
+        if (!resp.ok) {
+          const alt = `https://api.opensea.io/api/v2/chain/${req.params.chain}/contract/${req.params.contract}`;
+          const resp2 = await fetch(alt, { headers: { 'X-API-KEY': apiKey } });
+          if (!resp2.ok) return res.json({ error: `OpenSea ${resp.status}` });
+          const data2 = await resp2.json();
+          return res.json({ slug: data2.collection || '' });
+        }
+        const data = await resp.json();
+        res.json({ slug: data.collection || '' });
+      } catch (e) { res.json({ error: e.message }); }
+    });
+
     // Wallet endpoints
     this.express.get('/api/wallets', auth, (req, res) => {
       res.json(this.app.walletManager.getSummary());
