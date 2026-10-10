@@ -215,6 +215,58 @@ export class Dashboard {
       }
     });
 
+    // WL Check - NFT balances for all wallets
+    this.express.post('/api/wl/check', auth, async (req, res) => {
+      try {
+        const { chain: chainKey, contract } = req.body;
+        if (!chainKey || !contract) return res.status(400).json({ error: 'chain and contract required' });
+        const chain = this.app.evmChains[chainKey];
+        if (!chain) return res.status(400).json({ error: 'Unknown chain: ' + chainKey });
+
+        const summary = this.app.walletManager.getSummary();
+        const wallets = [];
+        if (summary.mainWallet) wallets.push({ label: 'Utama', address: summary.mainWallet, type: 'main' });
+        if (summary.validatorWallet) wallets.push({ label: 'Validator', address: summary.validatorWallet, type: 'validator' });
+        for (const w of (summary.evm?.wallets || [])) {
+          wallets.push({ label: `Bot #${w.index}`, address: w.address, type: 'bot', index: w.index, enabled: w.enabled });
+        }
+
+        const addresses = wallets.map(w => w.address);
+        const { balances, totalSupply, maxSupply } = await chain.checkNFTBalances(contract, addresses);
+
+        const result = wallets.map((w, i) => ({
+          ...w,
+          nftBalance: balances[i]?.balance || 0
+        }));
+
+        let seadrop = null;
+        try { seadrop = await chain.querySeaDropInfo(contract); } catch {}
+
+        res.json({ wallets: result, seadrop, totalSupply, maxSupply });
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
+    // WL eligibility check via OpenSea API (single wallet)
+    this.express.post('/api/wl/check-wl', auth, async (req, res) => {
+      try {
+        const { chain: chainKey, slug, apiKey, address } = req.body;
+        if (!slug || !apiKey || !address) return res.status(400).json({ error: 'slug, apiKey, and address required' });
+        const chain = this.app.evmChains[chainKey || 'ethereum'];
+        if (!chain) return res.status(400).json({ error: 'Unknown chain' });
+
+        try {
+          const mintData = await chain.getOpenSeaMintTx(slug, address, 1, apiKey);
+          res.json({ eligible: true, address });
+        } catch (e) {
+          res.json({ eligible: false, address, error: e.message });
+        }
+      } catch (err) {
+        res.status(500).json({ error: err.message });
+      }
+    });
+
     // NFT Sniper endpoints
     this.express.get('/api/sniper/nft/targets', auth, (req, res) => {
       res.json(this.app.nftSniper.getTargets());

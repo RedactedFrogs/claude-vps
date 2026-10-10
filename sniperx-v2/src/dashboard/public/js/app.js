@@ -843,6 +843,165 @@ async function exportWL() {
     `<span style="color:var(--green)">Exported ${data.length} wallets</span>`;
 }
 
+// === WL CHECK ===
+let wlCheckState = { wallets: [], slug: '', apiKey: '', chain: '' };
+let wlDetectTimer = null;
+
+function onWLContractInput(val) {
+  const status = document.getElementById('wl-chain-detect');
+  if (wlDetectTimer) clearTimeout(wlDetectTimer);
+  if (/^0x[a-fA-F0-9]{40}$/.test(val)) {
+    status.innerHTML = '<span style="color:var(--orange)">Detecting chain...</span>';
+    wlDetectTimer = setTimeout(async () => {
+      try {
+        const data = await apiGet(`/api/chain/detect/${val}`);
+        if (data && data.primary) {
+          document.getElementById('wl-chain').value = data.primary;
+          status.innerHTML = `<span style="color:var(--green)">Found on: ${data.chains.join(', ')}</span>`;
+        } else {
+          status.innerHTML = '<span style="color:var(--text-dim)">Contract not found</span>';
+        }
+      } catch { status.innerHTML = ''; }
+    }, 500);
+  } else {
+    status.textContent = '';
+  }
+}
+
+async function checkWL() {
+  const chain = document.getElementById('wl-chain').value;
+  const contract = document.getElementById('wl-contract').value.trim();
+  if (!contract || !/^0x[a-fA-F0-9]{40}$/.test(contract)) return alert('Isi contract address yang valid');
+
+  const slug = document.getElementById('wl-slug').value.trim();
+  const apiKey = document.getElementById('wl-apikey').value.trim();
+  const btn = document.getElementById('wl-check-btn');
+  btn.disabled = true;
+  btn.textContent = 'Loading...';
+
+  const resultsCard = document.getElementById('wl-results');
+  const tableEl = document.getElementById('wl-table');
+  resultsCard.classList.remove('hidden');
+  tableEl.innerHTML = '<div class="feed-empty">Loading...</div>';
+
+  try {
+    const data = await api('/api/wl/check', { chain, contract });
+    if (data.error) { tableEl.innerHTML = `<div class="feed-empty" style="color:var(--red)">${data.error}</div>`; return; }
+
+    wlCheckState = { wallets: data.wallets, slug, apiKey, chain };
+
+    const phaseCard = document.getElementById('wl-phase-info');
+    const phaseEl = document.getElementById('wl-phase-content');
+    if (data.seadrop) {
+      phaseCard.classList.remove('hidden');
+      let html = `<div style="margin-bottom:8px">Supply: <b>${data.totalSupply}</b>${data.maxSupply ? ' / ' + data.maxSupply : ''}</div>`;
+      if (data.seadrop.publicDrop) {
+        const p = data.seadrop.publicDrop;
+        const priceEth = (Number(p.mintPrice) / 1e18).toFixed(6);
+        const start = p.startTime ? new Date(p.startTime * 1000).toLocaleString('id-ID') : '-';
+        const end = p.endTime ? new Date(p.endTime * 1000).toLocaleString('id-ID') : '-';
+        html += `<div style="padding:10px;border-radius:8px;background:var(--bg);margin-bottom:6px">`;
+        html += `<b>Public Phase</b> ${p.isActive ? '<span style="color:var(--green)">ACTIVE</span>' : '<span style="color:var(--red)">Inactive</span>'}`;
+        html += `<br>Harga: ${priceEth} ETH &middot; Max: ${p.maxPerWallet}/wallet`;
+        html += `<br><span style="font-size:12px">${start} &mdash; ${end}</span>`;
+        html += `</div>`;
+      }
+      if (data.seadrop.signers?.length > 0) {
+        html += `<div style="padding:10px;border-radius:8px;background:var(--bg);margin-bottom:6px">`;
+        html += `<b>WL Signed Phase</b> <span style="color:var(--green)">CONFIGURED</span>`;
+        html += `<br><span style="font-size:12px">Signer: ${data.seadrop.signers.map(s => s.slice(0,10)+'...').join(', ')}</span>`;
+        html += `</div>`;
+      }
+      if (data.seadrop.hasAllowList) {
+        html += `<div style="padding:10px;border-radius:8px;background:var(--bg)">`;
+        html += `<b>Allowlist Phase</b> <span style="color:var(--green)">HAS MERKLE ROOT</span>`;
+        html += `</div>`;
+      }
+      phaseEl.innerHTML = html;
+    } else {
+      phaseCard.classList.add('hidden');
+    }
+
+    renderWLTable(data.wallets, slug, apiKey);
+
+    const minted = data.wallets.filter(w => w.nftBalance > 0);
+    document.getElementById('wl-summary').textContent = `${minted.length} sudah mint`;
+  } catch (e) {
+    tableEl.innerHTML = `<div class="feed-empty" style="color:var(--red)">Error: ${e.message}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Cek Semua Wallet';
+  }
+}
+
+function renderWLTable(wallets, slug, apiKey) {
+  const tableEl = document.getElementById('wl-table');
+  const hasWLCheck = slug && apiKey;
+
+  let html = '<div style="overflow-x:auto"><table style="width:100%;border-collapse:collapse;font-size:13px">';
+  html += '<thead><tr style="border-bottom:1px solid var(--border);text-align:left">';
+  html += '<th style="padding:8px 4px">Wallet</th>';
+  html += '<th style="padding:8px 4px;text-align:center">NFT</th>';
+  if (hasWLCheck) html += '<th style="padding:8px 4px;text-align:center">WL</th>';
+  html += '</tr></thead><tbody>';
+
+  for (const w of wallets) {
+    const addrShort = `${w.address.slice(0,6)}...${w.address.slice(-4)}`;
+    const nftBadge = w.nftBalance > 0
+      ? `<span style="color:var(--green);font-weight:bold">${w.nftBalance}</span>`
+      : '<span style="color:var(--text-dim)">0</span>';
+    const labelColor = w.type === 'main' ? 'var(--accent)' : w.type === 'validator' ? 'var(--purple)' : 'var(--text)';
+    html += `<tr style="border-bottom:1px solid var(--border)">`;
+    html += `<td style="padding:6px 4px"><span style="color:${labelColor};font-weight:600;font-size:12px">${w.label}</span><br><span style="font-family:monospace;font-size:11px;color:var(--text-dim)">${addrShort}</span></td>`;
+    html += `<td style="padding:6px 4px;text-align:center">${nftBadge}</td>`;
+    if (hasWLCheck) {
+      html += `<td style="padding:6px 4px;text-align:center" id="wl-s-${w.address.slice(2,10)}">`;
+      html += `<button class="btn btn-sm" style="font-size:11px;padding:3px 8px" onclick="checkSingleWL('${w.address}')">Cek</button>`;
+      html += `</td>`;
+    }
+    html += `</tr>`;
+  }
+
+  html += '</tbody></table></div>';
+
+  if (hasWLCheck) {
+    html += `<button class="btn btn-full mt-10" onclick="checkAllWL()" id="wl-check-all-btn">Cek WL Semua Wallet</button>`;
+  }
+
+  tableEl.innerHTML = html;
+}
+
+async function checkSingleWL(address) {
+  const el = document.getElementById(`wl-s-${address.slice(2,10)}`);
+  if (!el) return;
+  el.innerHTML = '<span style="color:var(--orange)">...</span>';
+  try {
+    const res = await api('/api/wl/check-wl', {
+      chain: wlCheckState.chain,
+      slug: wlCheckState.slug,
+      apiKey: wlCheckState.apiKey,
+      address
+    });
+    if (res.eligible) {
+      el.innerHTML = '<span style="color:var(--green);font-weight:bold">WL &#10003;</span>';
+    } else {
+      el.innerHTML = '<span style="color:var(--red)">No</span>';
+    }
+  } catch {
+    el.innerHTML = '<span style="color:var(--red)">Err</span>';
+  }
+}
+
+async function checkAllWL() {
+  const btn = document.getElementById('wl-check-all-btn');
+  if (btn) { btn.disabled = true; btn.textContent = 'Checking...'; }
+  for (const w of wlCheckState.wallets) {
+    await checkSingleWL(w.address);
+    await new Promise(r => setTimeout(r, 300));
+  }
+  if (btn) { btn.disabled = false; btn.textContent = 'Cek WL Semua Wallet'; }
+}
+
 // === SETTINGS ===
 async function saveSettings() {
   // These would be sent to the backend

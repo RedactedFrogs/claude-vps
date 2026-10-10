@@ -203,6 +203,29 @@ export class EVMChain {
     };
   }
 
+  async checkNFTBalances(contractAddress, walletAddresses) {
+    const provider = this.getProvider();
+    const nft = new ethers.Contract(contractAddress, [
+      'function balanceOf(address) view returns (uint256)',
+      'function totalSupply() view returns (uint256)',
+      'function maxSupply() view returns (uint256)'
+    ], provider);
+    const results = await Promise.allSettled(
+      walletAddresses.map(addr => nft.balanceOf(addr).then(b => Number(b)))
+    );
+    let totalSupply = 0, maxSupply = 0;
+    try { totalSupply = Number(await nft.totalSupply()); } catch {}
+    try { maxSupply = Number(await nft.maxSupply()); } catch {}
+    return {
+      balances: results.map((r, i) => ({
+        address: walletAddresses[i],
+        balance: r.status === 'fulfilled' ? r.value : 0
+      })),
+      totalSupply,
+      maxSupply
+    };
+  }
+
   async querySeaDropInfo(nftContract, seadropAddr) {
     const provider = this.getProvider();
     const sd = new ethers.Contract(seadropAddr || SEADROP_ADDRESS, SEADROP_ABI, provider);
