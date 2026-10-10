@@ -18,6 +18,7 @@ const GAME_MS  = 38_000;
 const MAX_LOG  = 2 * 1024 * 1024;
 const LOG_FILE = '/home/boss/cactus_claimer.log';
 const STATUS_FILE = '/home/boss/cactus_claimer_status.json';
+const TURNSTILE_SITEKEY = '0x4AAAAAAFNblsMOxNKk_AyH';
 
 function log(msg) {
   const ts = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
@@ -110,23 +111,28 @@ const TURNSTILE_HOOK = `
 (function() {
   window.__cactusToken = null;
   window.__cactusTokenTime = 0;
+  window.__tsDebug = [];
+
   var _check = setInterval(function() {
     if (window.turnstile && typeof window.turnstile.render === 'function' && !window.turnstile.__cPatched) {
       window.turnstile.__cPatched = true;
+      window.__tsDebug.push('patched_at_' + Date.now());
       var origRender = window.turnstile.render;
       window.turnstile.render = function(el, opts) {
+        window.__tsDebug.push('render_called_' + Date.now());
         var newOpts = Object.assign({}, opts || {});
         var origCb = newOpts.callback;
         newOpts.callback = function(token) {
           window.__cactusToken = token;
           window.__cactusTokenTime = Date.now();
+          window.__tsDebug.push('token_received_' + Date.now());
           if (origCb) origCb(token);
         };
         return origRender.call(window.turnstile, el, newOpts);
       };
       clearInterval(_check);
     }
-  }, 50);
+  }, 10);
 })();
 `;
 
@@ -175,9 +181,12 @@ async function claimForWallet(wallet) {
 
     log('  Waiting for Turnstile solve...');
     let token = null;
+    let manualRenderDone = false;
+
     for (let i = 0; i < 45; i++) {
       token = await cdpEval(ws, 'window.__cactusToken');
       if (token) break;
+
       token = await cdpEval(ws, `
         (function(){
           var inp = document.querySelector('input[name="cf-turnstile-response"]');
@@ -185,28 +194,74 @@ async function claimForWallet(wallet) {
         })()
       `);
       if (token) break;
+
       if (i === 5) {
-        log('  Checking Turnstile state...');
         const tState = await cdpEval(ws, `JSON.stringify({
-          ts: typeof window.turnstile,
-          patched: !!window.turnstile?.__cPatched,
-          divs: document.querySelectorAll('[class*=turnstile]').length,
-          iframes: document.querySelectorAll('iframe').length
+          ts: typeof window.turnstile, patched: !!window.turnstile?.__cPatched,
+          iframes: document.querySelectorAll('iframe').length,
+          debug: window.__tsDebug?.join(',') || 'none'
         })`);
-        log('  ' + tState);
+        log('  State@10s: ' + tState);
       }
+
+      if (i === 8 && !manualRenderDone) {
+        log('  No auto-render detected, triggering manual Turnstile render...');
+        manualRenderDone = true;
+        const renderResult = await cdpEval(ws, `
+          (function() {
+            if (typeof window.turnstile !== 'object' || typeof window.turnstile.render !== 'function') {
+              return 'turnstile_not_ready';
+            }
+            var container = document.querySelector('[id*="turnstile"]');
+            if (!container) {
+              container = document.createElement('div');
+              container.id = 'manual-turnstile';
+              container.style.cssText = 'position:fixed;bottom:10px;right:10px;z-index:99999';
+              document.body.appendChild(container);
+            }
+            try {
+              var widgetId = window.turnstile.render(container, {
+                sitekey: '${TURNSTILE_SITEKEY}',
+                callback: function(token) {
+                  window.__cactusToken = token;
+                  window.__cactusTokenTime = Date.now();
+                  window.__tsDebug.push('manual_token_' + Date.now());
+                },
+                'error-callback': function(e) {
+                  window.__tsDebug.push('manual_error_' + JSON.stringify(e));
+                }
+              });
+              return 'rendered_widget_' + widgetId;
+            } catch(e) {
+              return 'render_error: ' + e.message;
+            }
+          })()
+        `);
+        log('  Manual render: ' + renderResult);
+      }
+
+      if (i === 20) {
+        const debug = await cdpEval(ws, `JSON.stringify({
+          ts: typeof window.turnstile, patched: !!window.turnstile?.__cPatched,
+          iframes: document.querySelectorAll('iframe').length,
+          inp: (document.querySelector('input[name="cf-turnstile-response"]')||{}).value?.slice(0,30) || 'none',
+          debug: window.__tsDebug?.join(',') || 'none'
+        })`);
+        log('  State@40s: ' + debug);
+      }
+
       await sleep(2000);
     }
 
     if (!token) {
       log('  ERROR: Turnstile not solved after 90s');
       const debug = await cdpEval(ws, `JSON.stringify({
-        ts: typeof window.turnstile,
-        patched: !!window.turnstile?.__cPatched,
+        ts: typeof window.turnstile, patched: !!window.turnstile?.__cPatched,
         token: window.__cactusToken,
-        divs: document.querySelectorAll('[class*=turnstile]').length,
         iframes: document.querySelectorAll('iframe').length,
-        inp: (document.querySelector('input[name="cf-turnstile-response"]')||{}).value?.slice(0,30) || 'none'
+        idDivs: document.querySelectorAll('[id*="turnstile"]').length,
+        inp: (document.querySelector('input[name="cf-turnstile-response"]')||{}).value?.slice(0,30) || 'none',
+        debug: window.__tsDebug?.join(',') || 'none'
       })`);
       log('  Debug: ' + debug);
       return { ok: false, error: 'turnstile_timeout' };
@@ -278,7 +333,7 @@ async function claimForWallet(wallet) {
 }
 
 async function main() {
-  log(`=== CactusEXE Claimer v2 started === ${WALLETS.length} wallet(s)`);
+  log(`=== CactusEXE Claimer v3 started === ${WALLETS.length} wallet(s)`);
   saveStatus({ started: new Date().toISOString(), wallets: WALLETS.length, state: 'monitoring' });
 
   const claimed = new Set();
