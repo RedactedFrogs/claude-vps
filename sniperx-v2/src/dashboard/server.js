@@ -2,6 +2,7 @@ import express from 'express';
 import { createServer } from 'http';
 import { Server as SocketIO } from 'socket.io';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -42,6 +43,24 @@ export class Dashboard {
       if (!this.authenticated.has(token)) return res.status(401).json({ error: 'Unauthorized' });
       next();
     };
+
+    // Config endpoints (saved API keys)
+    const configPath = path.join(process.env.HOME || '/home/boss', '.sniperx_config.json');
+    const loadConfig = () => { try { return JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch { return {}; } };
+    const saveConfig = (cfg) => fs.writeFileSync(configPath, JSON.stringify(cfg, null, 2));
+
+    this.express.get('/api/config', auth, (req, res) => {
+      const cfg = loadConfig();
+      res.json({ openseaApiKey: cfg.openseaApiKey || '', collectionSlug: cfg.collectionSlug || '' });
+    });
+
+    this.express.post('/api/config', auth, (req, res) => {
+      const cfg = loadConfig();
+      if (req.body.openseaApiKey !== undefined) cfg.openseaApiKey = req.body.openseaApiKey;
+      if (req.body.collectionSlug !== undefined) cfg.collectionSlug = req.body.collectionSlug;
+      saveConfig(cfg);
+      res.json({ ok: true });
+    });
 
     // Wallet endpoints
     this.express.get('/api/wallets', auth, (req, res) => {

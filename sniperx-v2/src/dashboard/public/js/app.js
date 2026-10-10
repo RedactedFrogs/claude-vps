@@ -68,6 +68,32 @@ function showApp() {
   connectSocket();
   loadDashboard();
   loadWallets();
+  loadSavedConfig();
+}
+
+async function loadSavedConfig() {
+  try {
+    const cfg = await apiGet('/api/config');
+    if (!cfg) return;
+    if (cfg.openseaApiKey) {
+      const fields = ['sds-apikey', 'wl-apikey'];
+      fields.forEach(id => { const el = document.getElementById(id); if (el && !el.value) el.value = cfg.openseaApiKey; });
+    }
+    if (cfg.collectionSlug) {
+      const fields = ['sds-slug', 'wl-slug'];
+      fields.forEach(id => { const el = document.getElementById(id); if (el && !el.value) el.value = cfg.collectionSlug; });
+    }
+  } catch {}
+}
+
+let configSaveTimer = null;
+function autoSaveConfig() {
+  if (configSaveTimer) clearTimeout(configSaveTimer);
+  configSaveTimer = setTimeout(() => {
+    const apiKey = document.getElementById('sds-apikey')?.value?.trim() || document.getElementById('wl-apikey')?.value?.trim() || '';
+    const slug = document.getElementById('sds-slug')?.value?.trim() || document.getElementById('wl-slug')?.value?.trim() || '';
+    if (apiKey || slug) api('/api/config', { openseaApiKey: apiKey, collectionSlug: slug });
+  }, 2000);
 }
 
 function showLogin() {
@@ -478,6 +504,7 @@ function onNFTSlugApiKeyChange() {
       checkNFTWalletEligibility();
     }
   }, 1000);
+  autoSaveConfig();
 }
 
 let nftWLCheckRunning = false;

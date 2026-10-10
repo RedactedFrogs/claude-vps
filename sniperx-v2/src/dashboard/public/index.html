@@ -378,11 +378,11 @@
           </div>
           <div class="form-group">
             <label>Collection Slug (opsional, untuk cek WL via OpenSea)</label>
-            <input type="text" id="wl-slug" placeholder="blacktide-relics-of-the-tides">
+            <input type="text" id="wl-slug" placeholder="blacktide-relics-of-the-tides" oninput="autoSaveConfig()">
           </div>
           <div class="form-group">
             <label>OpenSea API Key (opsional)</label>
-            <input type="text" id="wl-apikey" placeholder="API key dari opensea.io/developers">
+            <input type="text" id="wl-apikey" placeholder="API key dari opensea.io/developers" oninput="autoSaveConfig()">
           </div>
           <button class="btn btn-green btn-full" onclick="checkWL()" id="wl-check-btn">Cek Semua Wallet</button>
         </div>
