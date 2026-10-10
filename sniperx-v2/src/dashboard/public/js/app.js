@@ -359,21 +359,29 @@ let allBotWallets = [];
 let selectedBotIndices = new Set();
 let nftEligibilityData = null;
 
+function getWLStatus(address) {
+  const addr = address.toLowerCase();
+  if (nftEligibilityData?.wlResults?.[addr] !== undefined) return nftEligibilityData.wlResults[addr];
+  if (wlCheckState?.wallets?.length > 0) {
+    const found = wlCheckState.wallets.find(w => w.address.toLowerCase() === addr);
+    if (found && found._wl !== undefined) return found._wl;
+  }
+  return undefined;
+}
+
 function getNFTBadge(address) {
   if (!nftEligibilityData?.wallets) return '';
   const addr = address.toLowerCase();
   const w = nftEligibilityData.wallets.find(x => x.address.toLowerCase() === addr);
   if (!w) return '';
-  let badge = '';
-  if (w.nftBalance > 0) badge = ` <span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(0,200,0,0.15);color:var(--green)">${w.nftBalance} minted</span>`;
-  if (nftEligibilityData.wlResults) {
-    const wl = nftEligibilityData.wlResults[addr];
-    if (wl === true) badge += ' <span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(0,200,100,0.18);color:var(--green);font-weight:bold">Eligible ✓</span>';
-    else if (wl === false) badge += ' <span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(255,60,60,0.15);color:var(--red)">Not Eligible</span>';
-    else if (wl === 'checking') badge += ' <span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;color:var(--orange)">Checking...</span>';
-  }
-  if (!badge) badge = ' <span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(100,100,100,0.1);color:var(--text-dim)">0</span>';
-  return badge;
+  const BS = 'display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;';
+  let badges = '';
+  if (w.nftBalance > 0) badges += ` <span style="${BS}background:rgba(0,200,0,0.15);color:var(--green)">${w.nftBalance} minted</span>`;
+  const wl = getWLStatus(address);
+  if (wl === true) badges += ` <span style="${BS}background:rgba(0,200,100,0.18);color:var(--green);font-weight:bold">Eligible ✓</span>`;
+  else if (wl === false) badges += ` <span style="${BS}background:rgba(255,60,60,0.15);color:var(--red)">Not Eligible</span>`;
+  else if (wl === 'checking') badges += ` <span style="${BS}color:var(--orange)">⏳ Checking...</span>`;
+  return badges;
 }
 
 async function fetchNFTEligibility(chain, contract) {
@@ -408,6 +416,7 @@ function renderNFTEligibility() {
   if (!el || !nftEligibilityData) return;
   const { wallets, seadrop, totalSupply, maxSupply } = nftEligibilityData;
   const minted = wallets.filter(w => w.nftBalance > 0);
+  const hasWL = seadrop?.signers?.length > 0 || seadrop?.hasAllowList;
   let html = '<div style="padding:8px 10px;border-radius:8px;background:var(--bg);font-size:12px">';
   html += `Supply: <b>${totalSupply}</b>${maxSupply ? '/' + maxSupply : ''}`;
   html += ` &middot; <span style="color:var(--green)">${minted.length} wallet sudah mint</span>`;
@@ -416,26 +425,48 @@ function renderNFTEligibility() {
     else if (seadrop.publicDrop) html += ' &middot; <span style="color:var(--text-dim)">Public Inactive</span>';
     if (seadrop.hasAllowList) html += ' &middot; <span style="color:var(--accent)">Allowlist</span>';
   }
-  if (nftEligibilityData.wlResults) {
-    const results = Object.values(nftEligibilityData.wlResults);
-    const checking = results.filter(r => r === 'checking').length;
+  const wlResults = collectWLResults();
+  if (wlResults) {
+    const vals = Object.values(wlResults);
+    const checking = vals.filter(r => r === 'checking').length;
     if (checking > 0) {
-      html += ` &middot; <span style="color:var(--orange)">Cek WL... (${checking} sisa)</span>`;
+      html += ` &middot; <span style="color:var(--orange)">Cek WL... (${checking} tersisa)</span>`;
     } else {
-      const elig = results.filter(r => r === true).length;
-      const notElig = results.filter(r => r === false).length;
+      const elig = vals.filter(r => r === true).length;
+      const notElig = vals.filter(r => r === false).length;
       if (elig > 0) html += ` &middot; <span style="color:var(--green);font-weight:bold">${elig} eligible WL</span>`;
       if (notElig > 0) html += ` &middot; <span style="color:var(--red)">${notElig} not eligible</span>`;
     }
-  } else if (seadrop?.signers?.length > 0 || seadrop?.hasAllowList) {
+  } else if (hasWL) {
     const creds = getWLSlugAndKey();
-    if (!creds) {
-      html += ' &middot; <span style="color:var(--orange)">WL Detected — isi Slug + API Key di bawah untuk cek eligibility</span>';
-    }
+    if (!creds) html += ' &middot; <span style="color:var(--orange)">WL ada — isi slug+API key di SeaDrop Signed atau tab WL</span>';
   }
   html += '</div>';
   el.innerHTML = html;
   el.classList.remove('hidden');
+}
+
+function collectWLResults() {
+  if (nftEligibilityData?.wlResults && Object.keys(nftEligibilityData.wlResults).length > 0) return nftEligibilityData.wlResults;
+  if (wlCheckState?.wallets?.length > 0) {
+    const results = {};
+    let hasAny = false;
+    for (const w of wlCheckState.wallets) {
+      if (w._wl !== undefined) { results[w.address.toLowerCase()] = w._wl; hasAny = true; }
+    }
+    if (hasAny) return results;
+  }
+  return null;
+}
+
+function getWLSlugAndKey() {
+  const s1 = document.getElementById('sds-slug')?.value?.trim();
+  const k1 = document.getElementById('sds-apikey')?.value?.trim();
+  if (s1 && k1) return { slug: s1, apiKey: k1 };
+  const s2 = document.getElementById('wl-slug')?.value?.trim();
+  const k2 = document.getElementById('wl-apikey')?.value?.trim();
+  if (s2 && k2) return { slug: s2, apiKey: k2 };
+  return null;
 }
 
 let nftWLCheckTimer = null;
@@ -444,42 +475,9 @@ function onNFTSlugApiKeyChange() {
   nftWLCheckTimer = setTimeout(() => {
     if (nftEligibilityData) {
       nftEligibilityData.wlResults = null;
-      syncWLFields('sds');
       checkNFTWalletEligibility();
     }
   }, 1000);
-}
-function onNFTWLFieldChange() {
-  if (nftWLCheckTimer) clearTimeout(nftWLCheckTimer);
-  nftWLCheckTimer = setTimeout(() => {
-    if (nftEligibilityData) {
-      nftEligibilityData.wlResults = null;
-      syncWLFields('nft');
-      checkNFTWalletEligibility();
-    }
-  }, 1000);
-}
-function syncWLFields(source) {
-  const sdsSlug = document.getElementById('sds-slug');
-  const sdsKey = document.getElementById('sds-apikey');
-  const nftSlug = document.getElementById('nft-wl-slug');
-  const nftKey = document.getElementById('nft-wl-apikey');
-  if (source === 'sds') {
-    if (nftSlug && sdsSlug) nftSlug.value = sdsSlug.value;
-    if (nftKey && sdsKey) nftKey.value = sdsKey.value;
-  } else {
-    if (sdsSlug && nftSlug) sdsSlug.value = nftSlug.value;
-    if (sdsKey && nftKey) sdsKey.value = nftKey.value;
-  }
-}
-function getWLSlugAndKey() {
-  const s1 = document.getElementById('nft-wl-slug')?.value?.trim();
-  const k1 = document.getElementById('nft-wl-apikey')?.value?.trim();
-  if (s1 && k1) return { slug: s1, apiKey: k1 };
-  const s2 = document.getElementById('sds-slug')?.value?.trim();
-  const k2 = document.getElementById('sds-apikey')?.value?.trim();
-  if (s2 && k2) return { slug: s2, apiKey: k2 };
-  return null;
 }
 
 let nftWLCheckRunning = false;
@@ -487,8 +485,13 @@ async function checkNFTWalletEligibility() {
   if (!nftEligibilityData?.seadrop) return;
   const hasWL = (nftEligibilityData.seadrop.signers?.length > 0) || nftEligibilityData.seadrop.hasAllowList;
   if (!hasWL) return;
-  const wlFields = document.getElementById('nft-wl-check-fields');
-  if (wlFields) wlFields.classList.remove('hidden');
+  const existing = collectWLResults();
+  if (existing && !nftEligibilityData.wlResults) {
+    nftEligibilityData.wlResults = existing;
+    loadWalletPicker();
+    renderNFTEligibility();
+    return;
+  }
   const creds = getWLSlugAndKey();
   if (!creds) { renderNFTEligibility(); return; }
   const chain = document.getElementById('nft-chain')?.value;
@@ -1180,6 +1183,7 @@ async function checkSingleWL(address) {
   const el = document.getElementById(`wl-s-${address.slice(2,10)}`);
   if (!el) return false;
   el.innerHTML = '<span style="color:var(--orange);font-size:11px">⏳</span>';
+  const wObj = wlCheckState.wallets.find(w => w.address.toLowerCase() === address.toLowerCase());
   try {
     const res = await api('/api/wl/check-wl', {
       chain: wlCheckState.chain,
@@ -1189,13 +1193,16 @@ async function checkSingleWL(address) {
     });
     if (res.eligible) {
       el.innerHTML = '<span style="background:rgba(0,200,100,0.15);color:var(--green);padding:2px 8px;border-radius:4px;font-size:11px;font-weight:bold">Eligible ✓</span>';
+      if (wObj) wObj._wl = true;
       return true;
     } else {
       el.innerHTML = '<span style="background:rgba(255,60,60,0.15);color:var(--red);padding:2px 8px;border-radius:4px;font-size:11px">Tidak</span>';
+      if (wObj) wObj._wl = false;
       return false;
     }
   } catch {
     el.innerHTML = '<span style="color:var(--red);font-size:11px">Error</span>';
+    if (wObj) wObj._wl = false;
     return false;
   }
 }
