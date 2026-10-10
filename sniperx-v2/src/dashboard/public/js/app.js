@@ -530,7 +530,16 @@ async function mintNFTNow() {
   addFeed(`Minting ${res.target.label}...`, 'orange');
   const mint = await api('/api/sniper/nft/execute', { id: res.target.id });
   if (mint.ok) {
-    addFeed(`Mint success: ${mint.result?.confirmed || 0} confirmed`, 'green');
+    const errs = mint.result?.errors || 0;
+    if (errs > 0) {
+      const errMsg = mint.result?.results?.find(r => r.error)?.error || '';
+      let hint = errMsg;
+      if (hint.includes('execution reverted')) hint = 'Contract revert — mint mungkin belum aktif, perlu whitelist, atau harga salah';
+      else if (hint.includes('insufficient funds')) hint = 'Saldo tidak cukup untuk gas';
+      addFeed(`Mint gagal: ${hint}`, 'red');
+    } else {
+      addFeed(`Mint success: ${mint.result?.confirmed || 0} confirmed`, 'green');
+    }
   } else {
     addFeed(`Mint failed: ${mint.error}`, 'red');
   }
@@ -576,15 +585,26 @@ async function loadNFTTargets() {
   if (!history || history.length === 0) {
     histEl.innerHTML = '<div class="feed-empty">No history</div>';
   } else {
-    histEl.innerHTML = history.map(h => `
+    histEl.innerHTML = history.map(h => {
+      const errDetail = h.errorDetail || h.result?.results?.find(r => r.error)?.error || '';
+      let errLine = '';
+      if (errDetail) {
+        let msg = errDetail;
+        if (msg.includes('execution reverted')) msg = 'Contract revert — mint mungkin belum aktif, perlu whitelist, atau harga salah';
+        else if (msg.includes('insufficient funds')) msg = 'Saldo tidak cukup untuk gas';
+        else if (msg.length > 80) msg = msg.slice(0, 80) + '...';
+        errLine = `<div class="target-meta" style="color:var(--red);margin-top:4px">${msg}</div>`;
+      }
+      return `
       <div class="target-item">
         <div class="target-header">
           <span class="target-label">${h.label}</span>
           <span class="status-badge status-${h.status}">${h.status}</span>
         </div>
         <div class="target-meta">${h.chain} · ${h.result?.confirmed || 0} confirmed / ${h.result?.total || 0} total · ${h.executedAt ? new Date(h.executedAt).toLocaleString('id-ID') : ''}</div>
-      </div>
-    `).join('');
+        ${errLine}
+      </div>`;
+    }).join('');
   }
 }
 

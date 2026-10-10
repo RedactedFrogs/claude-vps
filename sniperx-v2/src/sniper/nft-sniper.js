@@ -77,6 +77,8 @@ export class NFTSniper extends EventEmitter {
       if (wallets.length === 0) throw new Error('No wallet available for mint');
 
       console.log(`[NFTSniper] Executing mint: ${target.label} with ${wallets.length} wallet(s) [${target.walletSource}]`);
+      console.log(`[NFTSniper] Contract: ${target.contractAddress} | Chain: ${target.chain} | Price: ${target.price} ETH`);
+      console.log(`[NFTSniper] ABI: ${target.mintFunction} | Args: ${JSON.stringify(target.mintArgs)}`);
 
       this.txEngine.updateConfig({ gasMultiplier: target.gasMultiplier });
 
@@ -94,6 +96,16 @@ export class NFTSniper extends EventEmitter {
 
       target.status = result.errors > 0 ? 'partial' : 'completed';
       target.result = result;
+
+      if (result.errors > 0) {
+        const errMsgs = result.results.filter(r => r.error).map(r => r.error);
+        console.log(`[NFTSniper] Mint errors (${result.errors}/${result.total}):`);
+        errMsgs.forEach(e => console.log(`  - ${e}`));
+        target.errorDetail = errMsgs[0] || 'Unknown error';
+      } else {
+        console.log(`[NFTSniper] Mint success: ${result.confirmed} confirmed`);
+      }
+
       this.history.push({ ...target, executedAt: new Date().toISOString() });
       this.emit('target-complete', { target, result });
       return result;
