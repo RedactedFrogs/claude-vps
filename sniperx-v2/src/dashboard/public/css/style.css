@@ -357,9 +357,11 @@ input:checked + .slider::before { transform: translateX(20px); }
   display: flex; align-items: center; gap: 8px;
   padding: 7px 10px; cursor: pointer; transition: background 0.15s;
   border-bottom: 1px solid var(--border);
+  -webkit-tap-highlight-color: rgba(59,130,246,0.2);
+  user-select: none;
 }
 .bw-item:last-child { border-bottom: none; }
-.bw-item:active { background: rgba(59,130,246,0.12); }
+.bw-item:active { background: rgba(59,130,246,0.15); }
 .bw-item.selected { background: rgba(59,130,246,0.08); }
 .bw-check {
   width: 18px; height: 18px; border: 2px solid var(--border); border-radius: 4px;

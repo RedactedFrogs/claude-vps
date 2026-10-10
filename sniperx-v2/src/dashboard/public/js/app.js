@@ -414,11 +414,12 @@ function renderBotList() {
   if (selectedWalletSource !== 'bot') { el.innerHTML = ''; updateBotCounter(); return; }
   const enabled = allBotWallets.filter(w => w.enabled);
   el.innerHTML = enabled.map(w =>
-    `<div class="bw-item ${selectedBotIndices.has(w.index) ? 'selected' : ''}" onclick="toggleBotWallet(${w.index})">
+    `<label class="bw-item ${selectedBotIndices.has(w.index) ? 'selected' : ''}">
+      <input type="checkbox" ${selectedBotIndices.has(w.index) ? 'checked' : ''} onchange="toggleBotWallet(${w.index})" style="display:none">
       <div class="bw-check">${selectedBotIndices.has(w.index) ? '&#10003;' : ''}</div>
       <span class="bw-idx">#${w.index}</span>
       <span class="bw-addr">${w.address.slice(0,6)}...${w.address.slice(-4)}</span>
-    </div>`
+    </label>`
   ).join('');
   updateBotCounter();
 }
