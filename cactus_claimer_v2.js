@@ -23,7 +23,6 @@ const TURNSTILE_SITEKEY = '0x4AAAAAAFNblsMOxNKk_AyH';
 function log(msg) {
   const ts = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });
   const line = `[${ts}] ${msg}`;
-  console.log(line);
   try {
     if (fs.existsSync(LOG_FILE) && fs.statSync(LOG_FILE).size > MAX_LOG) {
       const old = fs.readFileSync(LOG_FILE, 'utf8');
@@ -107,6 +106,58 @@ async function connectCDP(port, retries = 8) {
   throw new Error('Cannot connect CDP after retries');
 }
 
+const STEALTH_PATCHES = `
+(function() {
+  // Override WebGL renderer to look like a real GPU
+  var origGetContext = HTMLCanvasElement.prototype.getContext;
+  HTMLCanvasElement.prototype.getContext = function(type, attrs) {
+    var ctx = origGetContext.call(this, type, attrs);
+    if (ctx && (type === 'webgl' || type === 'webgl2' || type === 'experimental-webgl')) {
+      var origGetParam = ctx.getParameter.bind(ctx);
+      var origGetExt = ctx.getExtension.bind(ctx);
+      ctx.getParameter = function(param) {
+        // UNMASKED_VENDOR_WEBGL = 0x9245, UNMASKED_RENDERER_WEBGL = 0x9246
+        if (param === 0x9245) return 'Google Inc. (NVIDIA)';
+        if (param === 0x9246) return 'ANGLE (NVIDIA, NVIDIA GeForce GTX 1060 6GB Direct3D11 vs_5_0 ps_5_0, D3D11)';
+        return origGetParam(param);
+      };
+    }
+    return ctx;
+  };
+
+  // Ensure navigator.webdriver is properly hidden
+  Object.defineProperty(navigator, 'webdriver', {
+    get: function() { return false; },
+    configurable: true
+  });
+
+  // Override Permissions API to look normal
+  if (navigator.permissions) {
+    var origQuery = navigator.permissions.query.bind(navigator.permissions);
+    navigator.permissions.query = function(desc) {
+      if (desc.name === 'notifications') {
+        return Promise.resolve({ state: Notification.permission });
+      }
+      return origQuery(desc);
+    };
+  }
+
+  // Make chrome.runtime look real (without extension context it should exist but be limited)
+  if (window.chrome && !window.chrome.runtime) {
+    window.chrome.runtime = {
+      connect: function() { return {}; },
+      sendMessage: function() {},
+    };
+  }
+
+  // Override deviceMemory
+  Object.defineProperty(navigator, 'deviceMemory', {
+    get: function() { return 8; },
+    configurable: true
+  });
+})();
+`;
+
 const TURNSTILE_HOOK = `
 (function() {
   window.__cactusToken = null;
@@ -128,6 +179,16 @@ const TURNSTILE_HOOK = `
           window.__tsDebug.push('token_received_' + Date.now());
           if (origCb) origCb(token);
         };
+        if (!newOpts['error-callback']) {
+          newOpts['error-callback'] = function(e) {
+            window.__tsDebug.push('error_' + JSON.stringify(e) + '_' + Date.now());
+          };
+        }
+        if (!newOpts['timeout-callback']) {
+          newOpts['timeout-callback'] = function() {
+            window.__tsDebug.push('ts_timeout_' + Date.now());
+          };
+        }
         return origRender.call(window.turnstile, el, newOpts);
       };
       clearInterval(_check);
@@ -152,12 +213,17 @@ async function claimForWallet(wallet) {
     await sleep(1000);
 
     chrome = spawn('google-chrome', [
-      '--no-sandbox', '--disable-gpu', '--disable-dev-shm-usage',
+      '--no-sandbox', '--disable-dev-shm-usage',
       '--disable-blink-features=AutomationControlled',
       `--remote-debugging-port=${CDP_PORT}`,
       `--user-data-dir=${tmpDir}`,
       '--window-size=1280,720', '--no-first-run', '--disable-extensions',
       '--disable-background-networking', '--disable-default-apps',
+      // WebGL via SwiftShader (critical for Turnstile)
+      '--use-gl=angle',
+      '--use-angle=swiftshader-webgl',
+      '--enable-webgl',
+      '--ignore-gpu-blocklist',
       'about:blank',
     ], {
       stdio: 'ignore',
@@ -169,6 +235,8 @@ async function claimForWallet(wallet) {
     await cdpSend(ws, 'Page.enable');
     await cdpSend(ws, 'Runtime.enable');
 
+    // Inject stealth patches BEFORE page loads
+    await cdpSend(ws, 'Page.addScriptToEvaluateOnNewDocument', { source: STEALTH_PATCHES });
     await cdpSend(ws, 'Page.addScriptToEvaluateOnNewDocument', { source: TURNSTILE_HOOK });
 
     await cdpSend(ws, 'Network.setUserAgentOverride', {
@@ -199,13 +267,14 @@ async function claimForWallet(wallet) {
         const tState = await cdpEval(ws, `JSON.stringify({
           ts: typeof window.turnstile, patched: !!window.turnstile?.__cPatched,
           iframes: document.querySelectorAll('iframe').length,
+          widgetHTML: document.querySelector('[id*="turnstile"]')?.innerHTML?.slice(0,200) || 'none',
           debug: window.__tsDebug?.join(',') || 'none'
         })`);
         log('  State@10s: ' + tState);
       }
 
       if (i === 8 && !manualRenderDone) {
-        log('  No auto-render detected, triggering manual Turnstile render...');
+        log('  Triggering manual Turnstile render...');
         manualRenderDone = true;
         const renderResult = await cdpEval(ws, `
           (function() {
@@ -216,7 +285,7 @@ async function claimForWallet(wallet) {
             if (!container) {
               container = document.createElement('div');
               container.id = 'manual-turnstile';
-              container.style.cssText = 'position:fixed;bottom:10px;right:10px;z-index:99999';
+              container.style.cssText = 'position:fixed;bottom:10px;right:10px;z-index:99999;width:300px;height:65px';
               document.body.appendChild(container);
             }
             try {
@@ -229,6 +298,9 @@ async function claimForWallet(wallet) {
                 },
                 'error-callback': function(e) {
                   window.__tsDebug.push('manual_error_' + JSON.stringify(e));
+                },
+                'timeout-callback': function() {
+                  window.__tsDebug.push('manual_timeout_' + Date.now());
                 }
               });
               return 'rendered_widget_' + widgetId;
@@ -240,14 +312,15 @@ async function claimForWallet(wallet) {
         log('  Manual render: ' + renderResult);
       }
 
-      if (i === 20) {
+      if (i === 15) {
         const debug = await cdpEval(ws, `JSON.stringify({
           ts: typeof window.turnstile, patched: !!window.turnstile?.__cPatched,
           iframes: document.querySelectorAll('iframe').length,
           inp: (document.querySelector('input[name="cf-turnstile-response"]')||{}).value?.slice(0,30) || 'none',
+          widgetHTML: document.querySelector('[id*="turnstile"]')?.innerHTML?.slice(0,300) || 'none',
           debug: window.__tsDebug?.join(',') || 'none'
         })`);
-        log('  State@40s: ' + debug);
+        log('  State@30s: ' + debug);
       }
 
       await sleep(2000);
@@ -333,7 +406,7 @@ async function claimForWallet(wallet) {
 }
 
 async function main() {
-  log(`=== CactusEXE Claimer v3 started === ${WALLETS.length} wallet(s)`);
+  log(`=== CactusEXE Claimer v4 started === ${WALLETS.length} wallet(s)`);
   saveStatus({ started: new Date().toISOString(), wallets: WALLETS.length, state: 'monitoring' });
 
   const claimed = new Set();
