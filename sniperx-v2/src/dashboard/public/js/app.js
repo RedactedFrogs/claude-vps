@@ -400,14 +400,23 @@ function getNFTBadge(address) {
   const addr = address.toLowerCase();
   const w = nftEligibilityData.wallets.find(x => x.address.toLowerCase() === addr);
   if (!w) return '';
-  const BS = 'display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;';
   let badges = '';
-  if (w.nftBalance > 0) badges += ` <span style="${BS}background:rgba(0,200,0,0.15);color:var(--green)">${w.nftBalance} minted</span>`;
-  const wl = getWLStatus(address);
-  if (wl === true) badges += ` <span style="${BS}background:rgba(0,200,100,0.18);color:var(--green);font-weight:bold">Eligible ✓</span>`;
-  else if (wl === false) badges += ` <span style="${BS}background:rgba(255,60,60,0.15);color:var(--red)">Not Eligible</span>`;
-  else if (wl === 'checking') badges += ` <span style="${BS}color:var(--orange)">⏳ Checking...</span>`;
+  if (w.nftBalance > 0) badges += `<span style="display:inline-block;font-size:10px;padding:1px 6px;border-radius:4px;background:rgba(0,200,0,0.15);color:var(--green)">${w.nftBalance} minted</span> `;
   return badges;
+}
+
+function getWLBadgeHTML(address) {
+  const wl = getWLStatus(address);
+  if (wl === true) return '<div style="margin-top:3px;font-size:12px;font-weight:bold;color:#00e676;background:rgba(0,230,118,0.12);padding:2px 10px;border-radius:5px;display:inline-block">&#10003; Eligible WL</div>';
+  if (wl === false) return '<div style="margin-top:3px;font-size:12px;font-weight:bold;color:#ff5252;background:rgba(255,82,82,0.12);padding:2px 10px;border-radius:5px;display:inline-block">&#10007; Not Eligible</div>';
+  if (wl === 'checking') return '<div style="margin-top:3px;font-size:11px;color:var(--orange)">&#9203; Checking WL...</div>';
+  const hasWL = nftEligibilityData?.seadrop?.signers?.length > 0 || nftEligibilityData?.seadrop?.hasAllowList;
+  if (hasWL) {
+    const creds = getWLSlugAndKey();
+    if (!creds) return '<div style="margin-top:3px;font-size:11px;color:var(--text-dim)">WL: perlu API key</div>';
+    return '<div style="margin-top:3px;font-size:11px;color:var(--text-dim)">WL: belum dicek</div>';
+  }
+  return '';
 }
 
 async function autoDetectSlug(chain, contract) {
@@ -499,12 +508,9 @@ function collectWLResults() {
 }
 
 function getWLSlugAndKey() {
-  const s1 = document.getElementById('sds-slug')?.value?.trim();
-  const k1 = document.getElementById('sds-apikey')?.value?.trim();
-  if (s1 && k1) return { slug: s1, apiKey: k1 };
-  const s2 = document.getElementById('wl-slug')?.value?.trim();
-  const k2 = document.getElementById('wl-apikey')?.value?.trim();
-  if (s2 && k2) return { slug: s2, apiKey: k2 };
+  const slug = document.getElementById('sds-slug')?.value?.trim() || document.getElementById('wl-slug')?.value?.trim();
+  const apiKey = document.getElementById('sds-apikey')?.value?.trim() || document.getElementById('wl-apikey')?.value?.trim();
+  if (slug && apiKey) return { slug, apiKey };
   return null;
 }
 
@@ -574,21 +580,29 @@ async function loadWalletPicker() {
   if (mainAddr) {
     html += `<div class="wp-option ${selectedWalletSource === 'main' ? 'active' : ''}" onclick="selectWallet('main')">
       <div class="wp-radio"></div>
-      <div><div class="wp-name">Wallet Utama${getNFTBadge(mainAddr)}</div><div class="wp-addr">${mainAddr.slice(0,6)}...${mainAddr.slice(-4)}</div></div>
+      <div><div class="wp-name">Wallet Utama ${getNFTBadge(mainAddr)}</div><div class="wp-addr">${mainAddr.slice(0,6)}...${mainAddr.slice(-4)}</div>${getWLBadgeHTML(mainAddr)}</div>
     </div>`;
   }
   if (valAddr) {
     html += `<div class="wp-option ${selectedWalletSource === 'validator' ? 'active' : ''}" onclick="selectWallet('validator')">
       <div class="wp-radio"></div>
-      <div><div class="wp-name">Wallet Validator${getNFTBadge(valAddr)}</div><div class="wp-addr">${valAddr.slice(0,6)}...${valAddr.slice(-4)}</div></div>
+      <div><div class="wp-name">Wallet Validator ${getNFTBadge(valAddr)}</div><div class="wp-addr">${valAddr.slice(0,6)}...${valAddr.slice(-4)}</div>${getWLBadgeHTML(valAddr)}</div>
     </div>`;
   }
   if (botCount > 0) {
     const botMinted = nftEligibilityData?.wallets?.filter(w => w.type === 'bot' && w.nftBalance > 0).length || 0;
     const botBadge = nftEligibilityData ? ` <span style="font-size:10px;color:var(--green)">${botMinted} minted</span>` : '';
+    let botWLBadge = '';
+    if (nftEligibilityData?.wlResults) {
+      const botAddrs = (nftEligibilityData.wallets || []).filter(w => w.type === 'bot').map(w => w.address.toLowerCase());
+      const eligCount = botAddrs.filter(a => nftEligibilityData.wlResults[a] === true).length;
+      const notEligCount = botAddrs.filter(a => nftEligibilityData.wlResults[a] === false).length;
+      if (eligCount > 0) botWLBadge += `<span style="font-size:11px;font-weight:bold;color:#00e676"> &#10003; ${eligCount} eligible</span>`;
+      if (notEligCount > 0) botWLBadge += `<span style="font-size:11px;color:#ff5252"> &#10007; ${notEligCount} not</span>`;
+    }
     html += `<div class="wp-option ${selectedWalletSource === 'bot' ? 'active' : ''}" onclick="selectWallet('bot')">
       <div class="wp-radio"></div>
-      <div><div class="wp-name">Bot Wallets${botBadge}</div><div class="wp-addr">${botEnabled}/${botCount} aktif</div></div>
+      <div><div class="wp-name">Bot Wallets${botBadge}${botWLBadge}</div><div class="wp-addr">${botEnabled}/${botCount} aktif</div></div>
     </div>`;
   }
   picker.innerHTML = html;
@@ -618,7 +632,7 @@ function renderBotList() {
       <div class="bw-check">${selectedBotIndices.has(w.index) ? '&#10003;' : ''}</div>
       <span class="bw-idx">#${w.index}</span>
       <span class="bw-addr">${w.address.slice(0,6)}...${w.address.slice(-4)}</span>
-      ${getNFTBadge(w.address)}
+      ${getNFTBadge(w.address)}${getWLBadgeHTML(w.address)}
     </label>`
   ).join('');
   updateBotCounter();
