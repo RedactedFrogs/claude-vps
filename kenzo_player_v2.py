@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KenzoCoin v19 - death cap + better gap crossing."""
+"""KenzoCoin v20 - reduced gravity during gap jumps for wider arcs."""
 import json, struct, time, sys, ssl, os, random, subprocess
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -14,7 +14,7 @@ handle = sys.argv[2] if len(sys.argv) > 2 else "unknown"
 start_gate = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 TARGET_GATES = 20
 MAX_DEATHS = 8
-print(f"[G] v19 @{handle} start_gate={start_gate}")
+print(f"[G] v20 @{handle} start_gate={start_gate}")
 
 def get_level(gate, seed):
     try:
@@ -186,11 +186,13 @@ for attempt in range(TARGET_GATES * 10):
     deaths = 0
     DT = 0.08
     SPEED = 8.0
-    GRAVITY = -30.0
+    GRAVITY_NORMAL = -30.0
+    GRAVITY_GAP = -14.0
     JUMP_V = 10.0
 
     z = -2.0; x = 0.0; y = 0.5; vy = 0.0
     grounded = True; fin_sent = False
+    in_gap_jump = False
     finished_flag_t = 0
     zigzag_dir = 1
     zigzag_timer = 0
@@ -212,7 +214,7 @@ for attempt in range(TARGET_GATES * 10):
                 return True
         return False
 
-    def should_jump():
+    def approaching_gap():
         n = cur_nav()
         if not n: return False, 0
         dist = n["z_end"] - z
@@ -239,7 +241,6 @@ for attempt in range(TARGET_GATES * 10):
 
         cn = cur_nav()
         if cn:
-            # Aim toward next platform's x when near gap
             dist_to_edge = cn["z_end"] - z
             if dist_to_edge < 3 and cn["gap"] > 1.0:
                 tx = cn.get("next_x", cn["x"])
@@ -259,26 +260,31 @@ for attempt in range(TARGET_GATES * 10):
         x += (tx - x) * 0.15 + (random.random() - 0.5) * 0.2
         x = max(-5, min(5, x))
 
-        # Periodic jumps every 5-7 z units
+        # Periodic jumps (normal gravity)
         if grounded and z - last_jump_z > 5 + random.random() * 2 and z < goldZ - 2:
-            vy = JUMP_V
-            grounded = False
-            y += vy * DT
-            last_jump_z = z
-            jump_count += 1
-
-        # Gap jumps - with boost for wider gaps
-        elif grounded:
-            sj, gap_w = should_jump()
-            if sj:
-                boost = min(gap_w * 0.5, 3.0)
-                vy = JUMP_V + boost
+            at_gap, _ = approaching_gap()
+            if not at_gap:
+                vy = JUMP_V
                 grounded = False
+                in_gap_jump = False
+                y += vy * DT
+                last_jump_z = z
+                jump_count += 1
+
+        # Gap jumps (reduced gravity for wider arc)
+        if grounded:
+            at_gap, gap_w = approaching_gap()
+            if at_gap:
+                vy = JUMP_V
+                grounded = False
+                in_gap_jump = True
                 y += vy * DT
                 last_jump_z = z
                 jump_count += 1
 
         # Physics
+        gravity = GRAVITY_GAP if in_gap_jump else GRAVITY_NORMAL
+
         if grounded:
             on = cur_nav()
             if on:
@@ -290,8 +296,10 @@ for attempt in range(TARGET_GATES * 10):
             else:
                 grounded = False
                 vy = 0
+                # Started falling off edge — this is an implicit gap jump
+                in_gap_jump = True
         else:
-            vy += GRAVITY * DT
+            vy += gravity * DT
             y += vy * DT
             if vy <= 0:
                 on = cur_nav()
@@ -299,10 +307,12 @@ for attempt in range(TARGET_GATES * 10):
                     y = on["top"] + 0.3
                     vy = 0
                     grounded = True
+                    in_gap_jump = False
                 elif on_gold_plat() and y <= goldTop + 0.5:
                     y = goldTop + 0.3
                     vy = 0
                     grounded = True
+                    in_gap_jump = False
 
             if y < -10:
                 deaths += 1
@@ -316,6 +326,7 @@ for attempt in range(TARGET_GATES * 10):
                 for cp in cps:
                     if cp["z"] <= z: rz = cp["z"]
                 z = rz; y = 0.5; vy = 0; grounded = True; x = 0
+                in_gap_jump = False
                 time.sleep(0.2)
                 continue
 
