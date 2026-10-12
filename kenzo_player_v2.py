@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""KenzoCoin game player v3 - correct 8-byte binary, multi-z fin attempts."""
-import json, struct, time, sys, ssl, os, random
+"""KenzoCoin game player v4 - uses level extractor for exact positions."""
+import json, struct, time, sys, ssl, os, random, subprocess
 sys.stdout.reconfigure(line_buffering=True)
 
 try:
@@ -15,6 +15,18 @@ TARGET_GATES = 20
 
 print(f"[G] @{handle}")
 
+def get_level(gate, seed):
+    """Run the JS level extractor to get exact level layout."""
+    try:
+        out = subprocess.check_output(
+            ['node', '/home/boss/kenzo_level_extract.js', str(seed), str(gate)],
+            timeout=10, stderr=subprocess.DEVNULL
+        )
+        return json.loads(out)
+    except Exception as e:
+        print(f"[G] level extract failed: {e}")
+        return None
+
 ws = websocket.create_connection(
     "wss://kenzocoin.meme/play/ws",
     timeout=15,
@@ -27,6 +39,7 @@ print("[G] joined")
 gates = 0
 pts = 0
 lvl = -1
+seed = 0
 last_ping = 0
 
 def ping():
@@ -58,12 +71,10 @@ def handle_msg(m):
         me = m.get("me", {})
         gates = me.get("gate", gates)
         pts = me.get("pts", pts)
-        gain = m.get("gain", 0)
-        print(f"[G] GATE! +{gain} pts={pts} g={gates}")
+        print(f"[G] GATE! +{m.get('gain',0)} pts={pts} g={gates}")
         return "gate"
     elif t == "room":
         lvl = m.get("lvl", lvl)
-        print(f"[G] room lvl={lvl}")
         return "room"
     elif t == "pts":
         pts = m.get("pts", pts)
@@ -74,12 +85,7 @@ def handle_msg(m):
         print(f"[G] err: {m.get('m')}")
         return "err"
     elif t == "go":
-        print("[G] go!")
         return "go"
-    elif t == "feed":
-        # Show other players clearing gates for debugging
-        if m.get("k") == "pass":
-            print(f"[G] feed: {m.get('h')} gate {m.get('g')} +{m.get('v')}")
     return t
 
 # Wait for hi + room + go
@@ -88,11 +94,12 @@ for _ in range(20):
     if not m: continue
     t = m.get("t")
     if t == "hi":
-        print(f"[G] hi seed={m.get('seed')} dur={m.get('dur')} online={m.get('online')}")
+        seed = m.get("seed", 0)
+        print(f"[G] hi seed={seed} dur={m.get('dur')} online={m.get('online')}")
         ping()
     elif t == "room":
         lvl = m.get("lvl", 0)
-        print(f"[G] room lvl={lvl} players={len(m.get('players',[]))}")
+        print(f"[G] room lvl={lvl}")
     elif t == "go":
         print("[G] go!")
         break
@@ -101,85 +108,128 @@ for _ in range(20):
         if m.get("m") == "auth":
             ws.close(); sys.exit(1)
 
-print(f"[G] playing {TARGET_GATES} gates...")
+if not seed:
+    print("[G] no seed received")
+    ws.close(); sys.exit(1)
 
-# Try z positions for fin at these thresholds
-FIN_Z_TRIES = [55, 65, 75, 85, 95, 105]
+print(f"[G] playing {TARGET_GATES} gates...")
 
 for attempt in range(TARGET_GATES * 3):
     if gates >= TARGET_GATES:
         break
 
-    print(f"\n[G] gate {gates+1}/{TARGET_GATES} attempt {attempt+1}")
+    # Get exact level layout
+    level = get_level(gates, seed)
+    if not level:
+        print(f"[G] no level data, using fallback")
+        finishZ = 85.0
+        goldZ = 90.0
+        checkpoints = [1, 30, 60]
+        platforms = []
+    else:
+        finishZ = level.get("finishZ", 85)
+        gold = level.get("gold", [{}])[0]
+        goldZ = gold.get("z", finishZ + 5)
+        goldTop = gold.get("top", 0)
+        checkpoints = [cp["z"] for cp in level.get("checkpoints", [])]
+        platforms = level.get("platforms", [])
+        print(f"[G] gate {gates+1}: finishZ={finishZ} goldZ={goldZ} cps={checkpoints}")
 
-    z = 0.0
-    fin_try_idx = 0
     gate_got = False
 
-    # Move from z=0 to z=120 slowly (~20 seconds)
-    for step in range(300):
-        z += 0.4 + random.uniform(0, 0.15)
-        x = random.uniform(-3, 3)
-        # Realistic y: mostly grounded with occasional jumps
-        jump_r = random.random()
-        if jump_r < 0.12:
-            y = 1.0 + random.uniform(2, 7)
-            flags = 0  # airborne
-        else:
-            y = 0.5 + random.uniform(0, 0.5)
+    # Navigate through the level following actual platforms
+    z = 0.0
+    target_z = goldZ + 3
+    step_size = 0.55 + random.uniform(0, 0.15)  # ~7 units/sec at 80ms interval
+
+    for step in range(500):
+        z += step_size + (random.random() - 0.3) * 0.1
+        if z > target_z:
+            break
+
+        # Find which platform we should be on
+        on_plat = None
+        for p in platforms:
+            pz_min = p["z"] - p["d"]/2
+            pz_max = p["z"] + p["d"]/2
+            px_min = p["x"] - p["w"]/2
+            px_max = p["x"] + p["w"]/2
+            if pz_min <= z <= pz_max:
+                on_plat = p
+                break
+
+        if on_plat:
+            # On a platform - stay within its bounds
+            px = on_plat["x"] + (random.random() - 0.5) * max(1, on_plat["w"] - 2)
+            py = on_plat.get("top", 0) + 0.5 + random.random() * 0.3
             flags = 4  # grounded
 
-        # At each fin threshold, try sending fin with finished flag
-        if fin_try_idx < len(FIN_Z_TRIES) and z >= FIN_Z_TRIES[fin_try_idx]:
-            target_z = FIN_Z_TRIES[fin_try_idx]
-            fin_try_idx += 1
-            # Send grounded+finished at center x
-            for _ in range(10):
-                pos(0, 0.5, target_z + random.uniform(0, 3), 4 | 2)
-                time.sleep(0.08)
-            ws.send(json.dumps({"t": "fin"}))
-            print(f"[G] fin@z={target_z}")
-            # Check for response
-            for _ in range(10):
-                m = rx(0.3)
-                r = handle_msg(m)
-                if r == "gate":
-                    gate_got = True
-                    break
-                elif r == "room":
-                    break
-            if gate_got:
-                break
-            # Continue moving if no gate response
-            continue
+            # Occasionally jump
+            if random.random() < 0.06:
+                py += 2 + random.random() * 3
+                flags = 0  # airborne
+        else:
+            # Between platforms or in a gap - jumping/airborne
+            px = (random.random() - 0.5) * 6
+            py = 1.0 + random.random() * 4
+            flags = 0  # airborne
 
-        pos(x, y, z, flags)
+        # At finish area, set finished flag
+        if z >= finishZ:
+            px = 0 + (random.random() - 0.5) * 4  # stay centered on gold
+            py = goldTop + 0.5 + random.random() * 0.3
+            flags = 4 | 2  # grounded + finished
+
+        pos(px, py, z, flags)
         ping()
-        time.sleep(0.07 + random.uniform(0, 0.01))
+        time.sleep(0.08 + random.random() * 0.015)
 
+        # Check for messages
         m = rx(0.01)
         r = handle_msg(m)
         if r == "gate":
             gate_got = True
             break
-        elif r == "room":
+        if r == "room" or r == "go":
             break
 
-    if not gate_got:
-        # Final wait for delayed response
-        for _ in range(10):
-            m = rx(1)
-            r = handle_msg(m)
-            if r in ("gate", "room", "err", "go"):
-                if r == "gate": gate_got = True
+    if not gate_got and z >= goldZ - 2:
+        # Stay on gold platform and send fin
+        for _ in range(20):
+            pos(
+                (random.random() - 0.5) * 4,
+                goldTop + 0.5 + random.random() * 0.2,
+                goldZ + random.random() * 3,
+                4 | 2  # grounded + finished
+            )
+            ping()
+            time.sleep(0.08)
+            m = rx(0.01)
+            if handle_msg(m) == "gate":
+                gate_got = True
                 break
 
-    if not gate_got:
-        print(f"[G] no gate after z={z:.0f}")
+        if not gate_got:
+            ws.send(json.dumps({"t": "fin"}))
+            print(f"[G] fin@z={goldZ:.1f}")
 
-    time.sleep(1.5 + random.uniform(0, 1))
+            # Wait for response
+            for _ in range(20):
+                m = rx(1)
+                r = handle_msg(m)
+                if r == "gate":
+                    gate_got = True
+                    break
+                if r in ("room", "go", "err"):
+                    break
+
+    if gate_got:
+        print(f"[G] gate {gates}/{TARGET_GATES} cleared!")
+    else:
+        print(f"[G] no gate after z={z:.1f}")
+
+    time.sleep(1.5 + random.random())
     ping()
-
     # Drain
     for _ in range(5):
         m = rx(0.3)
