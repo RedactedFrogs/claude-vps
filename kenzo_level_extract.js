@@ -7,42 +7,43 @@
 
 const fs = require('fs');
 
+const seedArg = parseInt(process.argv[2] || '0');
+const gateArg = parseInt(process.argv[3] || '0');
+
+if (!seedArg) {
+  console.error('Usage: node kenzo_level_extract.js <seed> [gate]');
+  process.exit(1);
+}
+
 // Read the game JS
 const jsPath = '/tmp/kenzo_app.js';
 if (!fs.existsSync(jsPath)) {
-  console.error('Download app.js first: curl -o /tmp/kenzo_app.js "https://kenzocoin.meme/v2/play/app.js?v=80137626"');
+  console.error('Download first: curl -o /tmp/kenzo_app.js "https://kenzocoin.meme/v2/play/app.js?v=80137626"');
   process.exit(1);
 }
 
 const js = fs.readFileSync(jsPath, 'utf8');
 
-// Find the game-specific code section
-// It starts around "function gy(" and contains all the level logic
+// Find key code sections
 const gyIdx = js.indexOf('function gy(');
-if (gyIdx < 0) {
-  console.error('Could not find gy function');
+const hhEndMarker = 'r.dizzy=r.els.filter(c=>c.k==="dizzy"),r.gravs=r.els.filter(c=>c.k==="grav"),r}';
+const hhEnd = js.indexOf(hhEndMarker);
+
+if (gyIdx < 0 || hhEnd < 0) {
+  console.error('Could not find level generator functions');
   process.exit(1);
 }
 
-// Find end of level generator - the Hh function ends with r.gravs=...,r}
-const hhEnd = js.indexOf('r.dizzy=r.els.filter(c=>c.k==="dizzy"),r.gravs=r.els.filter(c=>c.k==="grav"),r}');
-if (hhEnd < 0) {
-  console.error('Could not find end of Hh');
-  process.exit(1);
-}
-const codeEnd = hhEnd + 'r.dizzy=r.els.filter(c=>c.k==="dizzy"),r.gravs=r.els.filter(c=>c.k==="grav"),r}'.length;
+const codeEnd = hhEnd + hhEndMarker.length;
 
-// Find Gf array - it's before gy but after some helper functions
-// Search backwards from gy for the start of the game section
-// Actually Gf might be after Hh. Let's search for it.
-let gfIdx = js.indexOf(',Gf=[', gyIdx);
-if (gfIdx < 0) gfIdx = js.indexOf('Gf=[', gyIdx);
+// Find Gf array
+let gfIdx = js.indexOf('Gf=[', gyIdx);
 if (gfIdx < 0) {
   console.error('Could not find Gf array');
   process.exit(1);
 }
 
-// Find end of Gf array
+// Find matching closing bracket
 let depth = 0, gfEnd = gfIdx;
 for (let i = js.indexOf('[', gfIdx); i < js.length; i++) {
   if (js[i] === '[') depth++;
@@ -52,103 +53,94 @@ for (let i = js.indexOf('[', gfIdx); i < js.length; i++) {
   }
 }
 
-// Extract code chunks
-const start = Math.min(gyIdx, gfIdx);
-const end = Math.max(codeEnd, gfEnd);
-
-console.error(`Extracting chars ${start}-${end} (${end-start} chars)`);
-
-// Build executable code
-// Need to provide stubs for dependencies
-const preamble = `
-// Stubs
-var Ae = Math.PI * 2; // tau
-var kh = (n,t,e) => n < t ? t : n > e ? e : n;
-var $i = (n,t) => ((n % t) + t) % t;
-`;
-
-let gameCode = js.substring(start, end);
-
-// The code might reference variables defined before our extract range
-// Add any missing ones
-const postCode = `
-// Extract level for given seed and gate
-const seed = parseInt(process.argv[2] || '0');
-const gate = parseInt(process.argv[3] || '0');
-
-if (!seed) {
-  console.error('Usage: node kenzo_level_extract.js <seed> [gate]');
-  process.exit(1);
+// Also find Bf (difficulty table) if it exists before our code
+let bfCode = '';
+const bfSearch = js.lastIndexOf('Bf=[', gyIdx);
+if (bfSearch >= 0) {
+  const bfEndIdx = js.indexOf('];', bfSearch) + 2;
+  bfCode = 'var ' + js.substring(bfSearch, bfEndIdx) + ';\n';
+  console.error(`Bf: ${bfSearch}-${bfEndIdx}`);
 }
 
+// Also find _y function (difficulty scaler)
+let dyCode = '';
+const dySearch = js.indexOf('function _y(');
+if (dySearch >= 0 && dySearch < codeEnd) {
+  // _y is within the extracted range, good
+} else if (dySearch >= 0) {
+  // Need to include it separately
+  let dyEnd = dySearch;
+  let dd = 0;
+  for (let i = js.indexOf('{', dySearch); i < js.length; i++) {
+    if (js[i] === '{') dd++;
+    else if (js[i] === '}') {
+      dd--;
+      if (dd === 0) { dyEnd = i + 1; break; }
+    }
+  }
+  dyCode = js.substring(dySearch, dyEnd) + '\n';
+  console.error(`_y: ${dySearch}-${dyEnd}`);
+}
+
+const start = Math.min(gyIdx, gfIdx);
+const end = Math.max(codeEnd, gfEnd);
+console.error(`Game code: ${start}-${end} (${end-start} chars)`);
+
+// Build the executable code
+const gameCode = js.substring(start, end);
+
+// Create a self-contained script
+const fullCode = `
+// Stubs for missing globals
+var Ae = Math.PI * 2;
+${bfCode}
+${dyCode}
+${gameCode}
+
+// Run level generator
 try {
-  const level = Hh(gate, seed);
-  const result = {
-    gate: gate,
-    seed: seed,
+  var level = Hh(${gateArg}, ${seedArg});
+  var result = {
+    gate: ${gateArg},
+    seed: ${seedArg},
     name: level.name,
     finishZ: level.finishZ,
     gateZ: level.gateZ,
     end: level.end,
     sweep: level.sweep,
+    y: level.y,
     checkpoints: level.cps,
     segments: level.segs,
-    platforms: level.els.filter(e => e.k === 'box').map(e => ({
-      x: e.x, z: e.z, w: e.w, d: e.d,
-      top: e.top || 0, h: e.h || 1,
-      style: e.style, cp: e.cp || false,
-      trap: e.trap, fake: e.fake
-    })),
-    goldPlatform: level.els.filter(e => e.style === 'gold' && !e.trap).map(e => ({
-      x: e.x, z: e.z, w: e.w, d: e.d, top: e.top || 0
-    }))[0]
+    platforms: level.els.filter(function(e){return e.k==='box'}).map(function(e){
+      return {x:e.x,z:e.z,w:e.w,d:e.d,top:e.top||0,h:e.h||1,style:e.style,cp:!!e.cp,trap:e.trap,fake:e.fake};
+    }),
+    gold: level.els.filter(function(e){return e.style==='gold'&&!e.trap}).map(function(e){
+      return {x:e.x,z:e.z,w:e.w,d:e.d,top:e.top||0};
+    })
   };
-  console.log(JSON.stringify(result, null, 2));
-} catch(e) {
-  console.error('Error running level generator:', e.message);
-  console.error(e.stack);
+  process.stdout.write(JSON.stringify(result, null, 2));
+} catch(err) {
+  process.stderr.write('Level gen error: ' + err.message + '\\n' + err.stack + '\\n');
   process.exit(1);
 }
 `;
 
-// Check if kh and $i are already defined in the extract
-let finalPreamble = preamble;
-if (gameCode.includes('kh=')) finalPreamble = finalPreamble.replace(/var kh.*?;/, '');
-if (gameCode.includes('$i=')) finalPreamble = finalPreamble.replace(/var \$i.*?;/, '');
-
-// Also need Bf (difficulty table) if referenced
-// Search for Bf in the code
-const bfIdx = js.indexOf('Bf=[', Math.max(0, start - 5000));
-let bfCode = '';
-if (bfIdx >= 0 && bfIdx < start) {
-  let bfEnd = js.indexOf('];', bfIdx) + 2;
-  bfCode = js.substring(bfIdx, bfEnd) + ';\n';
-  console.error(`Also extracted Bf array (${bfEnd - bfIdx} chars)`);
-}
-
-const fullCode = finalPreamble + bfCode + gameCode + postCode;
-
-// Write to temp file and eval
 const tmpFile = '/tmp/kenzo_level_gen.js';
 fs.writeFileSync(tmpFile, fullCode);
 console.error(`Wrote ${fullCode.length} chars to ${tmpFile}`);
 
-// Run it
+// Execute
 const { execSync } = require('child_process');
 try {
-  const output = execSync(`node ${tmpFile} ${seed} ${gate}`, {
+  const output = execSync(`node ${tmpFile}`, {
     timeout: 10000,
-    encoding: 'utf8'
+    encoding: 'utf8',
+    stdio: ['pipe', 'pipe', 'pipe']
   });
   console.log(output);
 } catch(e) {
-  console.error('Execution failed:', e.stderr || e.message);
-  // Try to debug - show first error
-  try {
-    const debugOut = execSync(`node -e "try{require('${tmpFile}')}catch(e){console.error(e.message)}"`, {
-      timeout: 5000, encoding: 'utf8'
-    });
-    console.error('Debug:', debugOut);
-  } catch(e2) {}
+  console.error('Exec failed:');
+  if (e.stderr) console.error(e.stderr.substring(0, 2000));
+  if (e.stdout) console.log(e.stdout.substring(0, 500));
   process.exit(1);
 }
