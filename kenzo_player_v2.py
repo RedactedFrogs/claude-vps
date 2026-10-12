@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KenzoCoin v21 - wider jump window + edge-fall velocity + speed boost in air."""
+"""KenzoCoin v22 - fix double y-update in jumps + tuned gap gravity."""
 import json, struct, time, sys, ssl, os, random, subprocess
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -14,7 +14,7 @@ handle = sys.argv[2] if len(sys.argv) > 2 else "unknown"
 start_gate = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 TARGET_GATES = 20
 MAX_DEATHS = 8
-print(f"[G] v21 @{handle} start_gate={start_gate}")
+print(f"[G] v22 @{handle} start_gate={start_gate}")
 
 def get_level(gate, seed):
     try:
@@ -186,9 +186,9 @@ for attempt in range(TARGET_GATES * 10):
     deaths = 0
     DT = 0.08
     SPEED = 8.0
-    SPEED_AIR = 9.5
+    SPEED_AIR = 9.0
     GRAVITY_NORMAL = -30.0
-    GRAVITY_GAP = -12.0
+    GRAVITY_GAP = -16.0
     JUMP_V = 10.0
 
     z = -2.0; x = 0.0; y = 0.5; vy = 0.0
@@ -262,21 +262,19 @@ for attempt in range(TARGET_GATES * 10):
         x += (tx - x) * 0.15 + (random.random() - 0.5) * 0.2
         x = max(-5, min(5, x))
 
-        # Gap jumps
+        # Gap jumps (no initial y += vy*DT — let physics handle it)
         if grounded:
             at_gap, gap_w = approaching_gap()
             if at_gap:
                 vy = JUMP_V
                 grounded = False
                 in_gap_jump = True
-                y += vy * DT
                 last_jump_z = z
                 jump_count += 1
             elif z - last_jump_z > 5 + random.random() * 2 and z < goldZ - 2:
                 vy = JUMP_V
                 grounded = False
                 in_gap_jump = False
-                y += vy * DT
                 last_jump_z = z
                 jump_count += 1
 
@@ -292,11 +290,10 @@ for attempt in range(TARGET_GATES * 10):
                 y = goldTop + 0.3 + random.random() * 0.08
                 vy = 0
             else:
-                # Fell off edge - give upward velocity for coyote jump
+                # Fell off edge: coyote jump
                 grounded = False
-                vy = JUMP_V * 0.8
+                vy = JUMP_V * 0.7
                 in_gap_jump = True
-                y += vy * DT
                 jump_count += 1
         else:
             vy += gravity * DT
