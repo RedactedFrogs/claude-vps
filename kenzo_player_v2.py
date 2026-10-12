@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KenzoCoin v18 - fix jump physics (jumps were instantly cancelled)."""
+"""KenzoCoin v19 - death cap + better gap crossing."""
 import json, struct, time, sys, ssl, os, random, subprocess
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -13,7 +13,8 @@ tok = sys.argv[1]
 handle = sys.argv[2] if len(sys.argv) > 2 else "unknown"
 start_gate = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 TARGET_GATES = 20
-print(f"[G] v18 @{handle} start_gate={start_gate}")
+MAX_DEATHS = 8
+print(f"[G] v19 @{handle} start_gate={start_gate}")
 
 def get_level(gate, seed):
     try:
@@ -137,8 +138,12 @@ def build_nav(plats):
         if i < len(safe)-1:
             nxt = safe[i+1]
             e["gap"] = (nxt["z"] - nxt["d"]/2) - e["z_end"]
+            e["next_x"] = nxt.get("x", 0)
+            e["next_top"] = nxt.get("top", 0)
         else:
             e["gap"] = 0
+            e["next_x"] = 0
+            e["next_top"] = 0
         nav.append(e)
     return nav
 
@@ -174,10 +179,11 @@ for attempt in range(TARGET_GATES * 10):
     nav = build_nav(plats)
     gold_z_end = goldZ + gold_d/2
 
-    print(f"[G] g{gates+1} a{attempt+1}: gate={gates} fZ={finishZ} gZ={goldZ} p={len(nav)}")
+    print(f"[G] g{gates+1} a{attempt+1}: gate={gates} fZ={finishZ} gZ={goldZ} p={len(nav)} cp={len(cps)}")
 
     gate_got = False
     noped = False
+    deaths = 0
     DT = 0.08
     SPEED = 8.0
     GRAVITY = -30.0
@@ -208,12 +214,20 @@ for attempt in range(TARGET_GATES * 10):
 
     def should_jump():
         n = cur_nav()
-        if not n: return False
+        if not n: return False, 0
         dist = n["z_end"] - z
-        return 0 < dist < 1.2 and n["gap"] > 1.0
+        if 0 < dist < 1.5 and n["gap"] > 1.0:
+            return True, n["gap"]
+        return False, 0
 
-    for step in range(3000):
-        if gate_got or fin_sent: break
+    def next_plat_for(zpos):
+        for n in nav:
+            if n["z_start"] > zpos:
+                return n
+        return None
+
+    for step in range(5000):
+        if gate_got or fin_sent or deaths >= MAX_DEATHS: break
 
         z += SPEED * DT + (random.random() - 0.45) * 0.06
 
@@ -225,13 +239,22 @@ for attempt in range(TARGET_GATES * 10):
 
         cn = cur_nav()
         if cn:
-            zz_off = zigzag_dir * min(cn["w"]/4, 1.8)
-            tx = cn["x"] + zz_off
+            # Aim toward next platform's x when near gap
+            dist_to_edge = cn["z_end"] - z
+            if dist_to_edge < 3 and cn["gap"] > 1.0:
+                tx = cn.get("next_x", cn["x"])
+            else:
+                zz_off = zigzag_dir * min(cn["w"]/4, 1.8)
+                tx = cn["x"] + zz_off
         elif on_gold_plat():
             zz_off = zigzag_dir * min(gold_w/5, 1.5)
             tx = zz_off
         else:
-            tx = zigzag_dir * 1.0
+            nxt = next_plat_for(z)
+            if nxt:
+                tx = nxt["x"]
+            else:
+                tx = zigzag_dir * 1.0
 
         x += (tx - x) * 0.15 + (random.random() - 0.5) * 0.2
         x = max(-5, min(5, x))
@@ -240,19 +263,22 @@ for attempt in range(TARGET_GATES * 10):
         if grounded and z - last_jump_z > 5 + random.random() * 2 and z < goldZ - 2:
             vy = JUMP_V
             grounded = False
-            y += vy * DT  # CRITICAL: apply initial velocity immediately
+            y += vy * DT
             last_jump_z = z
             jump_count += 1
 
-        # Gap jumps
-        elif grounded and should_jump():
-            vy = JUMP_V
-            grounded = False
-            y += vy * DT  # apply initial velocity immediately
-            last_jump_z = z
-            jump_count += 1
+        # Gap jumps - with boost for wider gaps
+        elif grounded:
+            sj, gap_w = should_jump()
+            if sj:
+                boost = min(gap_w * 0.5, 3.0)
+                vy = JUMP_V + boost
+                grounded = False
+                y += vy * DT
+                last_jump_z = z
+                jump_count += 1
 
-        # Physics - only land when falling DOWN (vy <= 0)
+        # Physics
         if grounded:
             on = cur_nav()
             if on:
@@ -265,11 +291,8 @@ for attempt in range(TARGET_GATES * 10):
                 grounded = False
                 vy = 0
         else:
-            # In air
             vy += GRAVITY * DT
             y += vy * DT
-
-            # Only land when falling (vy <= 0)
             if vy <= 0:
                 on = cur_nav()
                 if on and y <= on["top"] + 0.5:
@@ -281,8 +304,8 @@ for attempt in range(TARGET_GATES * 10):
                     vy = 0
                     grounded = True
 
-            # Fell off
             if y < -10:
+                deaths += 1
                 pos(x, -300, z, 1)
                 time.sleep(0.2)
                 for _ in range(5):
@@ -296,7 +319,6 @@ for attempt in range(TARGET_GATES * 10):
                 time.sleep(0.2)
                 continue
 
-        # Flags
         flags = 0
         if grounded: flags |= 4
         if z >= finishZ + 1 and grounded:
@@ -313,21 +335,25 @@ for attempt in range(TARGET_GATES * 10):
         if r == "nope": noped = True; break
         if r == "room": break
 
-        # Fin after ~1.0s of finished flag
         if finished_flag_t > 0 and grounded and time.time() - finished_flag_t >= 1.0:
             if on_gold_plat() or z >= goldZ:
                 for _ in range(3):
                     pos(x + (random.random()-0.5)*0.2, y, z, 4|2)
                     time.sleep(DT)
                 ws.send(json.dumps({"t": "fin"}))
-                print(f"[G] fin z={z:.1f} y={y:.1f} j={jump_count} t={time.time()-start_time:.1f}s")
+                print(f"[G] fin z={z:.1f} y={y:.1f} j={jump_count} d={deaths} t={time.time()-start_time:.1f}s")
                 fin_sent = True
             elif z > gold_z_end:
                 ws.send(json.dumps({"t": "fin"}))
                 print(f"[G] late fin z={z:.1f}")
                 fin_sent = True; break
 
-    # Wait for response
+    if deaths >= MAX_DEATHS and not gate_got and not fin_sent:
+        print(f"[G] death cap ({deaths}) -> reconnect")
+        if not reconnect():
+            break
+        continue
+
     if fin_sent and not gate_got and not noped:
         for _ in range(40):
             r = handle_msg(rx(0.4))
@@ -336,7 +362,6 @@ for attempt in range(TARGET_GATES * 10):
             if r in ("room", "go", "err"): break
             ping()
 
-    # Extra drain to catch delayed NOPE
     if not gate_got and not noped:
         r = drain_check(2.0)
         if r == "gate": gate_got = True
