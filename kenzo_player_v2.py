@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""KenzoCoin game player v8 - stop on gold platform, fix no-floor."""
-import json, struct, time, sys, ssl, os, random, subprocess, math
+"""KenzoCoin game player v9 - continuous walk, slow on gold, proper physics."""
+import json, struct, time, sys, ssl, os, random, subprocess
 sys.stdout.reconfigure(line_buffering=True)
 
 try:
@@ -12,7 +12,6 @@ except ImportError:
 tok = sys.argv[1]
 handle = sys.argv[2] if len(sys.argv) > 2 else "unknown"
 TARGET_GATES = 20
-
 print(f"[G] @{handle}")
 
 def get_level(gate, seed):
@@ -72,7 +71,6 @@ def handle_msg(m):
         print(f"[G] GATE! +{m.get('gain',0)} pts={pts} g={gates}")
         return "gate"
     elif t == "room":
-        print(f"[G] room lvl={m.get('lvl')}")
         return "room"
     elif t == "pts":
         pts = m.get("pts", pts)
@@ -85,17 +83,14 @@ def handle_msg(m):
     elif t == "go":
         return "go"
     elif t == "nope":
-        print(f"[G] NOPE: {json.dumps(m)}")
+        print(f"[G] NOPE: {m.get('why')}")
         return "nope"
     elif t == "epoch":
-        new_seed = m.get("seed", seed)
-        if new_seed != seed:
-            print(f"[G] epoch: seed {seed}->{new_seed}")
-            seed = new_seed
+        ns = m.get("seed", seed)
+        if ns != seed:
+            print(f"[G] epoch {seed}->{ns}")
+            seed = ns
         return "epoch"
-    elif t == "bust":
-        print(f"[G] bust")
-        return "bust"
     elif t == "hi":
         seed = m.get("seed", 0)
         print(f"[G] hi seed={seed}")
@@ -110,6 +105,7 @@ def drain(t=0.5):
         if r == "gate": return "gate"
     return None
 
+# Wait for game start
 for _ in range(25):
     m = rx(5)
     if not m: continue
@@ -123,18 +119,19 @@ if not seed:
 
 print(f"[G] playing {TARGET_GATES} gates...")
 
-def find_surface_y(plats, z, x=0):
+def on_plat(plats, z, x):
+    """Check if position (x, z) is on any non-fake platform. Returns (top, plat) or (None, None)."""
     for p in plats:
-        pz_min = p["z"] - p["d"]/2
-        pz_max = p["z"] + p["d"]/2
-        px_min = p.get("x", 0) - p["w"]/2
-        px_max = p.get("x", 0) + p["w"]/2
-        if pz_min <= z <= pz_max and px_min <= x <= px_max:
+        pz = p["z"]
+        pd = p["d"]
+        pw = p["w"]
+        px = p.get("x", 0)
+        if abs(z - pz) <= pd/2 and abs(x - px) <= pw/2:
             if not p.get("fake"):
                 return p.get("top", 0), p
     return None, None
 
-for attempt in range(TARGET_GATES * 5):
+for attempt in range(TARGET_GATES * 6):
     if gates >= TARGET_GATES:
         break
 
@@ -146,148 +143,151 @@ for attempt in range(TARGET_GATES * 5):
     gold = level.get("gold", [{}])[0]
     goldZ = gold.get("z", finishZ + 5)
     goldTop = gold.get("top", 0)
-    goldW = gold.get("w", 12)
-    goldD = gold.get("d", 10)
-    goldX = gold.get("x", 0)
     plats = level.get("platforms", [])
     cps = level.get("checkpoints", [])
 
-    gold_z_min = goldZ - goldD/2
-    gold_z_max = goldZ + goldD/2
+    gold_z_start = goldZ - gold.get("d", 10) / 2
+    gold_z_end = goldZ + gold.get("d", 10) / 2
 
     print(f"[G] g{gates+1} a{attempt+1}: fZ={finishZ} gZ={goldZ} top={goldTop}")
 
     gate_got = False
-    step_dt = 0.08
-    speed_z = 8.0
-    gravity = -25.0
+    DT = 0.08
+    SPEED = 8.0
+    GRAVITY = -25.0
 
     z = -2.0
     x = 0.0
     y = 0.5
     vy = 0.0
     grounded = True
-    phase = "walk"  # walk -> gold -> fin -> done
-    gold_time = 0.0
     fin_sent = False
+    fin_time = 0.0  # time with finished flag
 
     for step in range(2500):
-        if gate_got: break
-        if phase == "done": break
+        if gate_got or fin_sent: break
 
-        if phase == "walk":
-            z += speed_z * step_dt + (random.random() - 0.3) * 0.15
-            x += (random.random() - 0.5) * 0.6
-            x = max(-4, min(4, x))
+        # Determine speed: slow down once on gold
+        if z >= gold_z_start:
+            spd = 2.0 + random.random() * 0.5
+        elif z >= finishZ - 5:
+            spd = 4.0 + random.random() * 0.5
+        else:
+            spd = SPEED + (random.random() - 0.3) * 0.5
 
-            surface_y, plat = find_surface_y(plats, z, x)
+        # Advance z smoothly
+        z += spd * DT
 
-            if surface_y is not None:
-                if grounded or y <= surface_y + 0.6:
-                    y = surface_y + 0.3 + random.random() * 0.3
-                    vy = 0
-                    grounded = True
-                    if random.random() < 0.05:
-                        vy = 8.0
-                        grounded = False
-            else:
-                if grounded:
-                    grounded = False
-                    vy = 0
+        # Keep x centered (near 0) to stay on platforms
+        x += (random.random() - 0.5) * 0.4
+        x *= 0.95  # drift toward center
+        x = max(-3, min(3, x))
 
-            if not grounded:
-                vy += gravity * step_dt
-                y += vy * step_dt
-                if y < -8:
-                    y = -200
-                    pos(x, y, z, 1)
-                    time.sleep(0.3)
-                    for _ in range(5):
-                        m = rx(0.2)
-                        r = handle_msg(m)
-                        if r == "gate": gate_got = True; break
-                    if gate_got: break
-                    resp_z = 1
-                    for cp in cps:
-                        if cp["z"] <= z: resp_z = cp["z"]
-                    z = resp_z
-                    y = 0.5
-                    vy = 0
-                    grounded = True
-                    x = 0
-                    time.sleep(0.3)
-                    continue
+        # Check if on a platform
+        ptop, plat = on_plat(plats, z, x)
 
-                surface_y2, plat2 = find_surface_y(plats, z, x)
-                if surface_y2 is not None and y <= surface_y2 + 0.5:
-                    y = surface_y2 + 0.3 + random.random() * 0.2
-                    vy = 0
-                    grounded = True
+        if ptop is not None:
+            if grounded or y <= ptop + 0.6:
+                y = ptop + 0.3 + random.random() * 0.2
+                vy = 0
+                grounded = True
+            # Random jump sometimes (not near gold)
+            if grounded and random.random() < 0.04 and z < finishZ - 10:
+                vy = 8.0
+                grounded = False
+        else:
+            # Over a gap - fall
+            if grounded:
+                grounded = False
+                vy = 0
 
-            if z >= gold_z_min and grounded:
-                phase = "gold"
-                x = goldX + (random.random() - 0.5) * 2
-                y = goldTop + 0.3 + random.random() * 0.2
-                z = goldZ + (random.random() - 0.5) * 2
-                gold_time = 0.0
-                print(f"[G] on gold x={x:.1f} y={y:.1f} z={z:.1f}")
+        # Gravity
+        if not grounded:
+            vy += GRAVITY * DT
+            y += vy * DT
 
-        elif phase == "gold":
-            gold_time += step_dt
-            x = goldX + (random.random() - 0.5) * 3
-            y = goldTop + 0.3 + random.random() * 0.2
-            z = goldZ + (random.random() - 0.5) * 2
-            grounded = True
+            # Check for landing
+            ptop2, plat2 = on_plat(plats, z, x)
+            if ptop2 is not None and y <= ptop2 + 0.5:
+                y = ptop2 + 0.3 + random.random() * 0.1
+                vy = 0
+                grounded = True
 
-            if gold_time >= 1.2 and not fin_sent:
-                flags = 4 | 2  # grounded + finished
-                pos(x, y, z, flags)
-                time.sleep(step_dt)
-                ping()
-                pos(x, y, z, flags)
-                time.sleep(step_dt)
-                ws.send(json.dumps({"t": "fin"}))
-                print(f"[G] fin@z={z:.1f} y={y:.1f} t={gold_time:.1f}s")
-                fin_sent = True
-                phase = "wait"
+            # Death from falling
+            if y < -8:
+                pos(x, -200, z, 1)  # dead flag
+                time.sleep(0.3)
+                for _ in range(5):
+                    m = rx(0.2)
+                    r = handle_msg(m)
+                    if r == "gate": gate_got = True; break
+                if gate_got: break
+                # Respawn at last checkpoint
+                rz = 1
+                for cp in cps:
+                    if cp["z"] <= z: rz = cp["z"]
+                z = rz
+                y = 0.5
+                vy = 0
+                grounded = True
+                x = 0
+                time.sleep(0.3)
                 continue
 
-        elif phase == "wait":
-            for _ in range(30):
-                m = rx(0.5)
-                r = handle_msg(m)
-                if r == "gate": gate_got = True; break
-                if r in ("room", "go"):
-                    gate_got = False; break
-                if r == "nope": break
-                if r == "epoch": break
-                if r == "err": break
-                ping()
-            phase = "done"
-            continue
-
+        # Flags
         flags = 0
         if grounded: flags |= 4
-        if phase == "gold" and z >= finishZ: flags |= 2
+        if z >= finishZ and grounded:
+            flags |= 2  # finished
+            fin_time += DT
 
         pos(x, y, z, flags)
         ping()
-        time.sleep(step_dt + random.random() * 0.01)
+        time.sleep(DT + random.random() * 0.008)
 
+        # Check messages
         m = rx(0.005)
         r = handle_msg(m)
         if r == "gate": gate_got = True; break
         if r in ("room", "epoch", "nope"): break
 
-        if phase == "walk" and z > gold_z_max + 5:
-            print(f"[G] past gold z={z:.1f}")
+        # Send fin after 1.5s on gold with finished flag, while grounded
+        if fin_time >= 1.5 and grounded and z >= gold_z_start:
+            # Send a few more grounded+finished positions
+            for _ in range(5):
+                x2 = x + (random.random() - 0.5) * 0.3
+                pos(x2, y, z, 4 | 2)
+                time.sleep(DT)
+                ping()
+            ws.send(json.dumps({"t": "fin"}))
+            print(f"[G] fin z={z:.1f} y={y:.1f} ft={fin_time:.1f}")
+            fin_sent = True
+
+        # Safety: stop if way past gold
+        if z > gold_z_end + 3:
+            if not fin_sent and fin_time > 0.5:
+                ws.send(json.dumps({"t": "fin"}))
+                print(f"[G] late fin z={z:.1f}")
+                fin_sent = True
             break
 
-    print(f"[G] {'OK g='+str(gates) if gate_got else 'no gate'}")
+    # Wait for gate response
+    if fin_sent:
+        for _ in range(30):
+            m = rx(0.5)
+            r = handle_msg(m)
+            if r == "gate": gate_got = True; break
+            if r in ("room", "go", "nope", "err", "epoch"): break
+            ping()
+
+    result = f"OK g={gates}" if gate_got else "no gate"
+    print(f"[G] {result}")
     time.sleep(1.5 + random.random())
     ping()
     dr = drain(1)
-    if dr == "gate": gate_got = True
+    if dr == "gate":
+        gate_got = True
+        print(f"[G] late gate! g={gates}")
 
 print(f"\n[G] DONE gates={gates} pts={pts}")
 try:
