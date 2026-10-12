@@ -188,8 +188,8 @@ for attempt in range(TARGET_GATES * 10):
     noped = False
     deaths = 0
     DT = 0.08
-    SPEED = 8.0
-    SPEED_AIR = 9.0
+    SPEED = 5.5
+    SPEED_AIR = 7.0
     GRAVITY_NORMAL = -30.0
     GRAVITY_GAP = -16.0
     JUMP_V = 10.0
@@ -251,6 +251,9 @@ for attempt in range(TARGET_GATES * 10):
             spd = SPEED_AIR
         else:
             spd = SPEED
+
+        if random.random() < 0.03 and not in_gap_jump:
+            spd *= 0.3
 
         z += spd * DT + (random.random() - 0.45) * 0.06
 
