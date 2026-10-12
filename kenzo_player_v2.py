@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KenzoCoin v16 - v7 speed + correct level gen + jumps + zigzag + reconnect."""
+"""KenzoCoin v17 - checkpoint safe, reconnect fix, jumps+zigzag."""
 import json, struct, time, sys, ssl, os, random, subprocess
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -13,7 +13,7 @@ tok = sys.argv[1]
 handle = sys.argv[2] if len(sys.argv) > 2 else "unknown"
 start_gate = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 TARGET_GATES = 20
-print(f"[G] v16 @{handle} start_gate={start_gate}")
+print(f"[G] v17 @{handle} start_gate={start_gate}")
 
 def get_level(gate, seed):
     try:
@@ -26,7 +26,7 @@ def get_level(gate, seed):
         print(f"[G] lvl err: {e}")
         return None
 
-def connect():
+def make_ws():
     ws = websocket.create_connection(
         "wss://kenzocoin.meme/play/ws",
         timeout=15,
@@ -36,7 +36,7 @@ def connect():
     ws.send(json.dumps({"t": "join", "tok": tok}))
     return ws
 
-ws = connect()
+ws = make_ws()
 print("[G] joined")
 
 gates = start_gate
@@ -103,11 +103,12 @@ def handle_msg(m):
         return "hi"
     return t
 
-def drain(t=0.5):
+def drain_check(t=1.0):
+    """Drain messages, return 'gate' or 'nope' if found."""
     end = time.time() + t
     while time.time() < end:
         r = handle_msg(rx(max(0.05, end - time.time())))
-        if r == "gate": return "gate"
+        if r in ("gate", "nope"): return r
     return None
 
 def wait_for_go():
@@ -142,7 +143,24 @@ def build_nav(plats):
         nav.append(e)
     return nav
 
-nope_count = 0
+def near_checkpoint(z_pos, cps, margin=3.0):
+    for cp in cps:
+        if abs(z_pos - cp["z"]) < margin:
+            return True
+    return False
+
+def reconnect():
+    global ws, seed
+    try: ws.close()
+    except: pass
+    time.sleep(1.5 + random.random() * 1.5)
+    ws = make_ws()
+    seed = 0
+    if wait_for_go() and seed:
+        print(f"[G] reconnected seed={seed}")
+        return True
+    print("[G] reconnect failed")
+    return False
 
 for attempt in range(TARGET_GATES * 10):
     if gates >= TARGET_GATES:
@@ -150,7 +168,7 @@ for attempt in range(TARGET_GATES * 10):
 
     level = get_level(gates, seed)
     if not level:
-        print(f"[G] skip gate={gates}"); time.sleep(3); drain(1); continue
+        print(f"[G] skip gate={gates}"); time.sleep(3); drain_check(1); continue
 
     finishZ = level["finishZ"]
     gold = level.get("gold", [{}])[0]
@@ -163,7 +181,8 @@ for attempt in range(TARGET_GATES * 10):
     nav = build_nav(plats)
     gold_z_end = goldZ + gold_d/2
 
-    print(f"[G] g{gates+1} a{attempt+1}: gate={gates} fZ={finishZ} gZ={goldZ} p={len(nav)}")
+    cp_zs = [cp["z"] for cp in cps]
+    print(f"[G] g{gates+1} a{attempt+1}: gate={gates} fZ={finishZ} gZ={goldZ} p={len(nav)} cp={len(cps)} cpz={cp_zs}")
 
     gate_got = False
     noped = False
@@ -204,7 +223,6 @@ for attempt in range(TARGET_GATES * 10):
     for step in range(3000):
         if gate_got or fin_sent: break
 
-        # Full speed always (like v7)
         z += SPEED * DT + (random.random() - 0.45) * 0.06
 
         # Zigzag
@@ -226,14 +244,15 @@ for attempt in range(TARGET_GATES * 10):
         x += (tx - x) * 0.15 + (random.random() - 0.5) * 0.2
         x = max(-5, min(5, x))
 
-        # Frequent jumps every 5-7 z units (avoid "never-jumps")
+        # Jump: every 5-7 z, but NOT near checkpoints (±3 z)
         if grounded and z - last_jump_z > 5 + random.random() * 2:
-            vy = JUMP_V
-            grounded = False
-            last_jump_z = z
-            jump_count += 1
+            if not near_checkpoint(z, cps, 3.0):
+                vy = JUMP_V
+                grounded = False
+                last_jump_z = z
+                jump_count += 1
 
-        # Gap jumps (higher priority)
+        # Gap jumps (always jump)
         if grounded and should_jump():
             vy = JUMP_V; grounded = False
             last_jump_z = z
@@ -279,7 +298,6 @@ for attempt in range(TARGET_GATES * 10):
         # Flags
         flags = 0
         if grounded: flags |= 4
-        # Set finished at finishZ + 1 (like v7)
         if z >= finishZ + 1 and grounded:
             flags |= 2
             if finished_flag_t == 0:
@@ -292,12 +310,10 @@ for attempt in range(TARGET_GATES * 10):
         r = handle_msg(rx(0.005))
         if r == "gate": gate_got = True; break
         if r == "nope": noped = True; break
-        if r in ("room", "epoch"): break
+        if r in ("room",): break  # don't break on epoch
 
-        # Send fin after ~1.0s of finished flag (v7 timing)
-        # At 8 u/s, z will be about finishZ+1 + 8*1.0 = finishZ+9 ≈ goldZ+4
+        # Fin after ~1.0s of finished flag
         if finished_flag_t > 0 and grounded and time.time() - finished_flag_t >= 1.0:
-            # Verify we're on or near gold
             if on_gold_plat() or z >= goldZ:
                 for _ in range(3):
                     pos(x + (random.random()-0.5)*0.2, y, z, 4|2)
@@ -310,32 +326,36 @@ for attempt in range(TARGET_GATES * 10):
                 print(f"[G] late fin z={z:.1f}")
                 fin_sent = True; break
 
-    if fin_sent:
-        for _ in range(30):
-            r = handle_msg(rx(0.5))
+    # Wait for response (gate or nope)
+    if fin_sent and not gate_got and not noped:
+        for _ in range(40):
+            r = handle_msg(rx(0.4))
             if r == "gate": gate_got = True; break
             if r == "nope": noped = True; break
-            if r in ("room", "go", "err", "epoch"): break
+            if r in ("room", "go", "err"): break
             ping()
 
+    # Extra drain to catch delayed NOPE
+    if not gate_got and not noped:
+        r = drain_check(2.0)
+        if r == "gate": gate_got = True
+        elif r == "nope": noped = True
+
     if noped:
-        nope_count += 1
-        print(f"[G] nope #{nope_count}, reconnecting...")
-        try: ws.close()
-        except: pass
-        time.sleep(2 + random.random() * 2)
-        ws = connect()
-        seed = 0
-        wait_for_go()
-        if not seed:
-            print("[G] reconnect failed"); break
-        print(f"[G] reconnected seed={seed}")
+        print(f"[G] nope -> reconnect")
+        if not reconnect():
+            break
         continue
 
     print(f"[G] {'OK g='+str(gates) if gate_got else 'no gate'}")
     time.sleep(1.0 + random.random())
     ping()
-    if drain(1) == "gate": print(f"[G] late gate g={gates}")
+    r = drain_check(1.0)
+    if r == "gate": print(f"[G] late gate g={gates}")
+    elif r == "nope":
+        print(f"[G] late nope -> reconnect")
+        if not reconnect():
+            break
 
 print(f"\n[G] DONE gates={gates} pts={pts}")
 try:
