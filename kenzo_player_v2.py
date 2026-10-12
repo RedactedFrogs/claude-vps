@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""KenzoCoin v12 - use server lvl for level gen, full speed, jump gaps."""
-import json, struct, time, sys, ssl, os, random, subprocess
+"""KenzoCoin v13 - zigzag anti-straight-line, slow on gold, proper fin."""
+import json, struct, time, sys, ssl, os, random, subprocess, math
 sys.stdout.reconfigure(line_buffering=True)
 
 try:
@@ -13,7 +13,7 @@ tok = sys.argv[1]
 handle = sys.argv[2] if len(sys.argv) > 2 else "unknown"
 start_gate = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 TARGET_GATES = 20
-print(f"[G] @{handle} start_gate={start_gate}")
+print(f"[G] v13 @{handle} start_gate={start_gate}")
 
 def get_level(gate, seed):
     try:
@@ -35,11 +35,11 @@ ws = websocket.create_connection(
 ws.send(json.dumps({"t": "join", "tok": tok}))
 print("[G] joined")
 
-gates = start_gate  # server-side gate count
+gates = start_gate
 seed = 0
 pts = 0
 last_ping = 0
-current_lvl = start_gate  # level from server room msg
+current_lvl = start_gate
 
 def ping():
     global last_ping
@@ -124,9 +124,12 @@ print(f"[G] playing gates {gates}->{TARGET_GATES}, lvl={current_lvl}")
 
 def on_plat(plats, z, x):
     for p in plats:
-        if abs(z - p["z"]) <= p["d"]/2 and abs(x - p.get("x",0)) <= p["w"]/2:
-            if not p.get("fake"):
-                return p.get("top", 0), p
+        pz_start = p["z"] - p["d"]/2
+        pz_end = p["z"] + p["d"]/2
+        if pz_start - 0.3 <= z <= pz_end + 0.3:
+            if abs(x - p.get("x",0)) <= p["w"]/2 + 0.3:
+                if not p.get("fake"):
+                    return p.get("top", 0), p
     return None, None
 
 def build_nav(plats):
@@ -135,7 +138,8 @@ def build_nav(plats):
     nav = []
     for i, p in enumerate(safe):
         e = {"z": p["z"], "x": p.get("x",0), "w": p["w"], "d": p["d"],
-             "top": p.get("top",0), "z_end": p["z"] + p["d"]/2}
+             "top": p.get("top",0), "z_end": p["z"] + p["d"]/2,
+             "z_start": p["z"] - p["d"]/2}
         if i < len(safe)-1:
             nxt = safe[i+1]
             e["gap"] = (nxt["z"] - nxt["d"]/2) - e["z_end"]
@@ -144,11 +148,10 @@ def build_nav(plats):
         nav.append(e)
     return nav
 
-for attempt in range(TARGET_GATES * 6):
+for attempt in range(TARGET_GATES * 8):
     if gates >= TARGET_GATES:
         break
 
-    # Use current_lvl for level generation (server tells us which level)
     lvl_for_gen = current_lvl
     level = get_level(lvl_for_gen, seed)
     if not level:
@@ -158,31 +161,42 @@ for attempt in range(TARGET_GATES * 6):
     gold = level.get("gold", [{}])[0]
     goldZ = gold.get("z", finishZ + 5)
     goldTop = gold.get("top", 0)
+    gold_d = gold.get("d", 10)
+    gold_w = gold.get("w", 12)
     plats = level.get("platforms", [])
     cps = level.get("checkpoints", [])
     nav = build_nav(plats)
-    gold_z_end = goldZ + gold.get("d", 10)/2
+    gold_z_start = goldZ - gold_d/2
+    gold_z_end = goldZ + gold_d/2
 
-    print(f"[G] g{gates+1} a{attempt+1}: lvl={lvl_for_gen} fZ={finishZ} gZ={goldZ} p={len(nav)}")
+    print(f"[G] g{gates+1} a{attempt+1}: lvl={lvl_for_gen} fZ={finishZ} gZ={goldZ} ge={gold_z_end:.1f} p={len(nav)}")
 
     gate_got = False
     DT = 0.08
     SPEED = 8.0
+    SLOW_SPEED = 3.0
     GRAVITY = -30.0
     JUMP_V = 10.0
 
     z = -2.0; x = 0.0; y = 0.5; vy = 0.0
     grounded = True; fin_sent = False
-    passed_gold = False; gold_enter_t = 0
+    on_gold = False; gold_enter_t = 0
+    zigzag_dir = 1
+    zigzag_timer = 0
+    step_count = 0
 
     def cur_nav():
         for n in nav:
-            zs = n["z"] - n["d"]/2
-            ze = n["z"] + n["d"]/2
-            if zs - 0.3 <= z <= ze + 0.3:
+            if n["z_start"] - 0.3 <= z <= n["z_end"] + 0.3:
                 if abs(x - n["x"]) <= n["w"]/2 + 0.3:
                     return n
         return None
+
+    def on_gold_plat():
+        if gold_z_start - 0.3 <= z <= gold_z_end + 0.3:
+            if abs(x) <= gold_w/2 + 0.3:
+                return True
+        return False
 
     def should_jump():
         n = cur_nav()
@@ -192,26 +206,56 @@ for attempt in range(TARGET_GATES * 6):
 
     for step in range(3000):
         if gate_got or fin_sent: break
+        step_count += 1
 
-        z += SPEED * DT + (random.random() - 0.4) * 0.08
+        # Speed: slow down on gold platform
+        if on_gold:
+            spd = SLOW_SPEED
+        elif z > goldZ - 5:
+            spd = SLOW_SPEED + 2.0  # slightly slower approaching gold
+        else:
+            spd = SPEED
+
+        z += spd * DT + (random.random() - 0.45) * 0.06
+
+        # Zigzag movement to avoid straight-line detection
+        zigzag_timer += DT
+        if zigzag_timer > 0.8 + random.random() * 0.6:
+            zigzag_dir *= -1
+            zigzag_timer = 0
 
         cn = cur_nav()
-        tx = cn["x"] if cn else 0
-        x += (tx - x) * 0.12 + (random.random() - 0.5) * 0.25
-        x = max(-4, min(4, x))
+        if cn:
+            # Move toward platform center with zigzag offset
+            zz_offset = zigzag_dir * min(cn["w"]/4, 2.0)
+            tx = cn["x"] + zz_offset
+        elif on_gold_plat():
+            zz_offset = zigzag_dir * min(gold_w/4, 2.0)
+            tx = zz_offset
+        else:
+            tx = zigzag_dir * 1.5
 
+        x += (tx - x) * 0.15 + (random.random() - 0.5) * 0.3
+        x = max(-5, min(5, x))
+
+        # Jump over gaps
         if grounded and should_jump():
             vy = JUMP_V; grounded = False
 
+        # Physics
         on = cur_nav()
         if on and grounded:
-            y = on["top"] + 0.3 + random.random() * 0.12
+            y = on["top"] + 0.3 + random.random() * 0.1
             vy = 0
         elif on and not grounded and y <= on["top"] + 0.5:
             y = on["top"] + 0.3
             vy = 0; grounded = True
         elif not on and grounded:
-            grounded = False; vy = 0
+            if on_gold_plat():
+                y = goldTop + 0.3 + random.random() * 0.1
+                vy = 0
+            else:
+                grounded = False; vy = 0
 
         if not grounded:
             vy += GRAVITY * DT
@@ -219,6 +263,8 @@ for attempt in range(TARGET_GATES * 6):
             on2 = cur_nav()
             if on2 and y <= on2["top"] + 0.5:
                 y = on2["top"] + 0.3; vy = 0; grounded = True
+            elif on_gold_plat() and y <= goldTop + 0.5:
+                y = goldTop + 0.3; vy = 0; grounded = True
             if y < -10:
                 pos(x, -300, z, 1)
                 time.sleep(0.2)
@@ -233,38 +279,45 @@ for attempt in range(TARGET_GATES * 6):
                 time.sleep(0.2)
                 continue
 
+        # Flags
         flags = 0
         if grounded: flags |= 4
         if z >= finishZ and grounded: flags |= 2
 
-        if z >= goldZ and grounded and not passed_gold:
-            passed_gold = True
+        # Gold platform detection
+        if on_gold_plat() and grounded and not on_gold:
+            on_gold = True
             gold_enter_t = time.time()
+            print(f"[G] on gold z={z:.1f}")
 
         pos(x, y, z, flags)
         ping()
-        time.sleep(DT + random.random() * 0.006)
+        time.sleep(DT + random.random() * 0.005)
 
         r = handle_msg(rx(0.005))
         if r == "gate": gate_got = True; break
         if r in ("room", "epoch", "nope"): break
 
-        if passed_gold and grounded and time.time() - gold_enter_t >= 1.0:
-            for _ in range(4):
-                pos(x, y, z, 4|2)
+        # Send fin while ON gold platform
+        if on_gold and grounded and time.time() - gold_enter_t >= 1.0:
+            # Extra position updates to confirm we're on gold
+            for _ in range(5):
+                pos(x + (random.random()-0.5)*0.3, y, z + (random.random()-0.5)*0.2, 4|2)
                 time.sleep(DT)
                 ping()
             ws.send(json.dumps({"t": "fin"}))
-            print(f"[G] fin z={z:.1f} y={y:.1f}")
+            print(f"[G] fin z={z:.1f} y={y:.1f} x={x:.1f}")
             fin_sent = True
 
-        if z > gold_z_end + 3 and not fin_sent:
+        # Safety: if past gold end and not on gold, something wrong
+        if z > gold_z_end + 2 and not fin_sent and not on_gold:
+            # We missed the gold, try fin anyway
             ws.send(json.dumps({"t": "fin"}))
             print(f"[G] late fin z={z:.1f}")
             fin_sent = True; break
 
     if fin_sent:
-        for _ in range(25):
+        for _ in range(30):
             r = handle_msg(rx(0.5))
             if r == "gate": gate_got = True; break
             if r in ("room", "go", "nope", "err", "epoch"): break
