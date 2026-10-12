@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KenzoCoin v23 - fix periodic jumps overshooting platforms."""
+"""KenzoCoin v24 - stop at finish, use gateZ for fin position."""
 import json, struct, time, sys, ssl, os, random, subprocess
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -14,7 +14,7 @@ handle = sys.argv[2] if len(sys.argv) > 2 else "unknown"
 start_gate = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 TARGET_GATES = 20
 MAX_DEATHS = 8
-print(f"[G] v23 @{handle} start_gate={start_gate}")
+print(f"[G] v24 @{handle} start_gate={start_gate}")
 
 def get_level(gate, seed):
     try:
@@ -169,6 +169,7 @@ for attempt in range(TARGET_GATES * 10):
         print(f"[G] skip gate={gates}"); time.sleep(3); drain_check(1); continue
 
     finishZ = level["finishZ"]
+    gateZ = level.get("gateZ", finishZ)
     gold = level.get("gold", [{}])[0]
     goldZ = gold.get("z", finishZ + 5)
     goldTop = gold.get("top", 0)
@@ -179,7 +180,10 @@ for attempt in range(TARGET_GATES * 10):
     nav = build_nav(plats)
     gold_z_end = goldZ + gold_d/2
 
-    print(f"[G] g{gates+1} a{attempt+1}: gate={gates} fZ={finishZ} gZ={goldZ} p={len(nav)} cp={len(cps)}")
+    # Finish zone: near the gateZ or finishZ
+    finish_zone = min(gateZ, finishZ)
+
+    print(f"[G] g{gates+1} a{attempt+1}: gate={gates} fZ={finishZ} gZ={gateZ} goldZ={goldZ} p={len(nav)} cp={len(cps)}")
 
     gate_got = False
     noped = False
@@ -195,6 +199,7 @@ for attempt in range(TARGET_GATES * 10):
     z = -2.0; x = 0.0; y = 0.5; vy = 0.0
     grounded = True; fin_sent = False
     in_gap_jump = False
+    in_finish_zone = False
     finished_flag_t = 0
     zigzag_dir = 1
     zigzag_timer = 0
@@ -238,7 +243,17 @@ for attempt in range(TARGET_GATES * 10):
     for step in range(5000):
         if gate_got or fin_sent or deaths >= MAX_DEATHS: break
 
-        spd = SPEED_AIR if in_gap_jump else SPEED
+        # Slow down in finish zone
+        if z >= finish_zone - 2:
+            in_finish_zone = True
+
+        if in_finish_zone:
+            spd = 2.0 + random.random() * 0.5
+        elif in_gap_jump:
+            spd = SPEED_AIR
+        else:
+            spd = SPEED
+
         z += spd * DT + (random.random() - 0.45) * 0.06
 
         # Zigzag
@@ -268,8 +283,8 @@ for attempt in range(TARGET_GATES * 10):
         x += (tx - x) * 0.15 + (random.random() - 0.5) * 0.2
         x = max(-5, min(5, x))
 
-        # Jump logic
-        if grounded:
+        # Jump logic (not in finish zone)
+        if grounded and not in_finish_zone:
             at_gap, gap_w = approaching_gap()
             if at_gap:
                 vy = JUMP_V
@@ -284,7 +299,7 @@ for attempt in range(TARGET_GATES * 10):
                 last_jump_z = z
                 jump_count += 1
 
-        # If periodic jump went past platform edge, switch to gap jump physics
+        # If periodic jump went past platform edge, switch to gap jump
         if not grounded and not in_gap_jump:
             on_p = cur_nav()
             if not on_p and not on_gold_plat():
@@ -302,7 +317,6 @@ for attempt in range(TARGET_GATES * 10):
                 y = goldTop + 0.3 + random.random() * 0.08
                 vy = 0
             else:
-                # Fell off edge: coyote jump
                 grounded = False
                 vy = JUMP_V * 0.8
                 in_gap_jump = True
@@ -336,13 +350,13 @@ for attempt in range(TARGET_GATES * 10):
                 for cp in cps:
                     if cp["z"] <= z: rz = cp["z"]
                 z = rz; y = 0.5; vy = 0; grounded = True; x = 0
-                in_gap_jump = False
+                in_gap_jump = False; in_finish_zone = False
                 time.sleep(0.2)
                 continue
 
         flags = 0
         if grounded: flags |= 4
-        if z >= finishZ + 1 and grounded:
+        if z >= finish_zone and grounded:
             flags |= 2
             if finished_flag_t == 0:
                 finished_flag_t = time.time()
@@ -356,15 +370,16 @@ for attempt in range(TARGET_GATES * 10):
         if r == "nope": noped = True; break
         if r == "room": break
 
-        if finished_flag_t > 0 and grounded and time.time() - finished_flag_t >= 1.0:
-            if on_gold_plat() or z >= goldZ:
-                for _ in range(3):
+        # Send fin after being in finish zone for 1.5s and grounded
+        if finished_flag_t > 0 and grounded and time.time() - finished_flag_t >= 1.5:
+            if on_gold_plat() or z >= finish_zone:
+                for _ in range(5):
                     pos(x + (random.random()-0.5)*0.2, y, z, 4|2)
                     time.sleep(DT)
                 ws.send(json.dumps({"t": "fin"}))
                 print(f"[G] fin z={z:.1f} y={y:.1f} j={jump_count} d={deaths} t={time.time()-start_time:.1f}s")
                 fin_sent = True
-            elif z > gold_z_end:
+            elif z > gold_z_end + 2:
                 ws.send(json.dumps({"t": "fin"}))
                 print(f"[G] late fin z={z:.1f}")
                 fin_sent = True; break
