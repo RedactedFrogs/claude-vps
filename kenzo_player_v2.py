@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""KenzoCoin game player v2 - play via WebSocket with realistic position simulation."""
+"""KenzoCoin game player v2 - play via WebSocket."""
 import json, struct, time, sys, ssl, os, random
+sys.stdout.reconfigure(line_buffering=True)
 
 try:
     import websocket
@@ -12,23 +13,20 @@ tok = sys.argv[1]
 handle = sys.argv[2] if len(sys.argv) > 2 else "unknown"
 TARGET_GATES = 20
 
-print(f"[GAME] @{handle}, tok={tok[:12]}...")
+print(f"[G] @{handle}")
 
 ws = websocket.create_connection(
     "wss://kenzocoin.meme/play/ws",
-    timeout=30,
+    timeout=15,
     sslopt={"cert_reqs": ssl.CERT_NONE},
     header={"Origin": "https://kenzocoin.meme"},
 )
-print("[GAME] Connected")
-
 ws.send(json.dumps({"t": "join", "tok": tok}))
+print("[G] joined")
 
-# State
-gates_cleared = 0
-total_pts = 0
-current_lvl = -1
-game_started = False
+gates = 0
+pts = 0
+lvl = -1
 last_ping = 0
 
 def ping():
@@ -38,181 +36,139 @@ def ping():
         ws.send(json.dumps({"t": "p", "c": int(now * 1000)}))
         last_ping = now
 
-def send_pos(x, y, z):
-    ix = max(-511, min(511, x))
-    iy = max(-500, min(511, y))
-    iz = max(-511, min(511, z))
-    buf = struct.pack('<3h', int(ix * 64), int(iy * 64), int(iz * 64))
-    ws.send_binary(buf)
+def pos(x, y, z):
+    x = max(-511, min(511, x))
+    y = max(-500, min(511, y))
+    z = max(-511, min(511, z))
+    ws.send_binary(struct.pack('<3h', int(x*64), int(y*64), int(z*64)))
 
-def recv_msg(timeout=3):
+def rx(timeout=3):
     ws.settimeout(timeout)
     try:
-        data = ws.recv()
-        if isinstance(data, bytes):
-            return None
-        return json.loads(data)
-    except websocket.WebSocketTimeoutException:
-        return None
-    except Exception as e:
-        print(f"[GAME] recv error: {e}")
-        return None
+        d = ws.recv()
+        if isinstance(d, bytes): return None
+        return json.loads(d)
+    except: return None
 
-def drain_msgs(duration=2):
-    msgs = []
-    end = time.time() + duration
-    while time.time() < end:
-        m = recv_msg(timeout=max(0.5, end - time.time()))
-        if m:
-            msgs.append(m)
-    return msgs
-
-print("[GAME] Waiting for server hello...")
-for _ in range(30):
-    m = recv_msg(timeout=5)
-    if not m:
-        continue
+# Wait for hi + room + go
+for _ in range(20):
+    m = rx(5)
+    if not m: continue
     t = m.get("t")
     if t == "hi":
-        print(f"[GAME] hi: seed={m.get('seed')}, online={m.get('online')}")
+        print(f"[G] hi seed={m.get('seed')}")
         ping()
     elif t == "room":
-        current_lvl = m.get("lvl", 0)
-        print(f"[GAME] room: lvl={current_lvl}")
-        game_started = True
+        lvl = m.get("lvl", 0)
+        print(f"[G] room lvl={lvl}")
     elif t == "go":
-        print(f"[GAME] go signal received")
-        game_started = True
-    elif t == "gate":
-        gates_cleared = m.get("me", {}).get("gate", gates_cleared)
-        total_pts = m.get("me", {}).get("pts", total_pts)
-        print(f"[GAME] gate! cleared={gates_cleared}, pts={total_pts}")
+        print("[G] go!")
+        break
     elif t == "err":
-        print(f"[GAME] error: {m.get('m')}")
+        print(f"[G] err: {m.get('m')}")
         if m.get("m") == "auth":
-            ws.close()
-            sys.exit(1)
-    elif t in ("add", "del", "feed", "p", "full", "bust"):
-        pass
-    else:
-        print(f"[GAME] other: t={t}")
-    if game_started:
+            ws.close(); sys.exit(1)
+
+print(f"[G] playing {TARGET_GATES} gates...")
+
+for attempt in range(TARGET_GATES * 3):
+    if gates >= TARGET_GATES:
         break
 
-if not game_started:
-    print("[GAME] Failed to join game")
-    ws.close()
-    sys.exit(1)
+    print(f"\n[G] gate {gates+1}/{TARGET_GATES} attempt {attempt+1}")
 
-print(f"[GAME] Game started! lvl={current_lvl}, playing {TARGET_GATES} gates...")
-
-for gate_attempt in range(TARGET_GATES * 2):
-    if gates_cleared >= TARGET_GATES:
-        break
-
-    print(f"\n[GAME] --- Gate attempt {gate_attempt+1} (cleared={gates_cleared}/{TARGET_GATES}) ---")
-
+    # Move from z=0 to z=120 over ~10s
+    # Levels are ~80-100 units, finishZ around z=55-85
     z = 0.0
-    speed = 30.0 + random.uniform(-3, 3)
-    y_base = 1.0
-    start_t = time.time()
-    update_interval = 0.08
-
-    while z < 480:
-        dt = update_interval
-        z += speed * dt + random.uniform(-0.5, 1.5)
-        x = random.uniform(-3, 3)
-        elapsed = time.time() - start_t
-        jump_phase = (elapsed * 2.5) % 1.0
-        if jump_phase < 0.4:
-            y = y_base + jump_phase * 8
-        elif jump_phase < 0.6:
-            y = y_base + (0.8 - jump_phase) * 8
+    for step in range(140):
+        z += 0.85 + random.uniform(0, 0.3)
+        x = random.uniform(-2.5, 2.5)
+        jump = random.random()
+        if jump < 0.25:
+            y = 1.0 + random.uniform(1, 5)
         else:
-            y = y_base + random.uniform(-0.2, 0.2)
+            y = 1.0 + random.uniform(-0.3, 0.5)
 
-        send_pos(x, y, z)
+        pos(x, y, z)
         ping()
-        time.sleep(update_interval + random.uniform(0, 0.02))
+        time.sleep(0.08 + random.uniform(0, 0.02))
 
-        m = recv_msg(timeout=0.01)
+        m = rx(0.01)
         if m:
             t = m.get("t")
             if t == "gate":
-                gates_cleared = m.get("me", {}).get("gate", gates_cleared)
-                total_pts = m.get("me", {}).get("pts", total_pts)
+                me = m.get("me", {})
+                gates = me.get("gate", gates)
+                pts = me.get("pts", pts)
                 gain = m.get("gain", 0)
-                print(f"[GAME] GATE CLEAR! +{gain}, total={total_pts}, cleared={gates_cleared}")
+                print(f"[G] GATE! +{gain} pts={pts} g={gates}")
             elif t == "room":
-                current_lvl = m.get("lvl", current_lvl)
-                print(f"[GAME] New room: lvl={current_lvl}")
+                lvl = m.get("lvl", lvl)
+                print(f"[G] room lvl={lvl}")
                 break
             elif t == "pts":
-                total_pts = m.get("pts", total_pts)
+                pts = m.get("pts", pts)
                 lost = m.get("lost", 0)
-                if lost:
-                    print(f"[GAME] death penalty: -{lost}")
+                if lost: print(f"[G] death -{lost}")
             elif t == "err":
-                print(f"[GAME] error: {m.get('m')}")
+                print(f"[G] err: {m.get('m')}")
             elif t == "go":
-                print(f"[GAME] go!")
+                print("[G] go!")
 
-    print(f"[GAME] At z={z:.0f}, sending fin...")
+    # Send fin
+    print(f"[G] z={z:.0f} fin")
     ws.send(json.dumps({"t": "fin"}))
 
-    fin_ok = False
-    for _ in range(30):
-        m = recv_msg(timeout=2)
-        if not m:
-            continue
+    # Wait for gate response
+    got = False
+    for _ in range(20):
+        m = rx(2)
+        if not m: continue
         t = m.get("t")
         if t == "gate":
-            gates_cleared = m.get("me", {}).get("gate", gates_cleared)
-            total_pts = m.get("me", {}).get("pts", total_pts)
+            me = m.get("me", {})
+            gates = me.get("gate", gates)
+            pts = me.get("pts", pts)
             gain = m.get("gain", 0)
-            print(f"[GAME] GATE CLEAR! +{gain}, total={total_pts}, cleared={gates_cleared}")
-            fin_ok = True
-        elif t == "room":
-            current_lvl = m.get("lvl", current_lvl)
-            print(f"[GAME] New room: lvl={current_lvl}")
-            fin_ok = True
+            print(f"[G] GATE! +{gain} pts={pts} g={gates}")
+            got = True
             break
-        elif t == "pts":
-            total_pts = m.get("pts", total_pts)
+        elif t == "room":
+            lvl = m.get("lvl", lvl)
+            print(f"[G] room lvl={lvl}")
+            got = True
+            break
         elif t == "err":
-            print(f"[GAME] err: {m.get('m')}")
+            print(f"[G] err: {m.get('m')}")
             break
         elif t == "go":
-            print(f"[GAME] go - new round")
+            print("[G] go!")
             break
-        elif t in ("add", "del", "feed", "p", "full"):
-            pass
-        if fin_ok:
-            break
+        elif t in ("pts",):
+            pts = m.get("pts", pts)
 
-    if not fin_ok:
-        print(f"[GAME] No gate response, trying to continue...")
+    if not got:
+        print("[G] no gate resp")
 
     time.sleep(1 + random.uniform(0, 0.5))
     ping()
 
-    for m in drain_msgs(1):
+    # Drain
+    for _ in range(5):
+        m = rx(0.5)
+        if not m: break
         t = m.get("t")
         if t == "gate":
-            gates_cleared = m.get("me", {}).get("gate", gates_cleared)
-            total_pts = m.get("me", {}).get("pts", total_pts)
-            print(f"[GAME] Late gate: cleared={gates_cleared}, pts={total_pts}")
+            me = m.get("me", {})
+            gates = me.get("gate", gates)
+            pts = me.get("pts", pts)
+            print(f"[G] late gate g={gates} pts={pts}")
         elif t == "room":
-            current_lvl = m.get("lvl", current_lvl)
-        elif t == "go":
-            pass
+            lvl = m.get("lvl", lvl)
 
-print(f"\n[GAME] === DONE ===")
-print(f"[GAME] gates_cleared={gates_cleared}, pts={total_pts}")
-
+print(f"\n[G] DONE gates={gates} pts={pts}")
 try:
     ws.send(json.dumps({"t": "out"}))
-    time.sleep(0.5)
+    time.sleep(0.3)
     ws.close()
-except:
-    pass
+except: pass
