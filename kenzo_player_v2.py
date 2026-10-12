@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KenzoCoin v20 - reduced gravity during gap jumps for wider arcs."""
+"""KenzoCoin v21 - wider jump window + edge-fall velocity + speed boost in air."""
 import json, struct, time, sys, ssl, os, random, subprocess
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -14,7 +14,7 @@ handle = sys.argv[2] if len(sys.argv) > 2 else "unknown"
 start_gate = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 TARGET_GATES = 20
 MAX_DEATHS = 8
-print(f"[G] v20 @{handle} start_gate={start_gate}")
+print(f"[G] v21 @{handle} start_gate={start_gate}")
 
 def get_level(gate, seed):
     try:
@@ -186,8 +186,9 @@ for attempt in range(TARGET_GATES * 10):
     deaths = 0
     DT = 0.08
     SPEED = 8.0
+    SPEED_AIR = 9.5
     GRAVITY_NORMAL = -30.0
-    GRAVITY_GAP = -14.0
+    GRAVITY_GAP = -12.0
     JUMP_V = 10.0
 
     z = -2.0; x = 0.0; y = 0.5; vy = 0.0
@@ -218,7 +219,7 @@ for attempt in range(TARGET_GATES * 10):
         n = cur_nav()
         if not n: return False, 0
         dist = n["z_end"] - z
-        if 0 < dist < 1.5 and n["gap"] > 1.0:
+        if 0 < dist < 3.0 and n["gap"] > 1.0:
             return True, n["gap"]
         return False, 0
 
@@ -231,7 +232,8 @@ for attempt in range(TARGET_GATES * 10):
     for step in range(5000):
         if gate_got or fin_sent or deaths >= MAX_DEATHS: break
 
-        z += SPEED * DT + (random.random() - 0.45) * 0.06
+        spd = SPEED_AIR if in_gap_jump else SPEED
+        z += spd * DT + (random.random() - 0.45) * 0.06
 
         # Zigzag
         zigzag_timer += DT
@@ -242,7 +244,7 @@ for attempt in range(TARGET_GATES * 10):
         cn = cur_nav()
         if cn:
             dist_to_edge = cn["z_end"] - z
-            if dist_to_edge < 3 and cn["gap"] > 1.0:
+            if dist_to_edge < 4 and cn["gap"] > 1.0:
                 tx = cn.get("next_x", cn["x"])
             else:
                 zz_off = zigzag_dir * min(cn["w"]/4, 1.8)
@@ -260,24 +262,20 @@ for attempt in range(TARGET_GATES * 10):
         x += (tx - x) * 0.15 + (random.random() - 0.5) * 0.2
         x = max(-5, min(5, x))
 
-        # Periodic jumps (normal gravity)
-        if grounded and z - last_jump_z > 5 + random.random() * 2 and z < goldZ - 2:
-            at_gap, _ = approaching_gap()
-            if not at_gap:
-                vy = JUMP_V
-                grounded = False
-                in_gap_jump = False
-                y += vy * DT
-                last_jump_z = z
-                jump_count += 1
-
-        # Gap jumps (reduced gravity for wider arc)
+        # Gap jumps
         if grounded:
             at_gap, gap_w = approaching_gap()
             if at_gap:
                 vy = JUMP_V
                 grounded = False
                 in_gap_jump = True
+                y += vy * DT
+                last_jump_z = z
+                jump_count += 1
+            elif z - last_jump_z > 5 + random.random() * 2 and z < goldZ - 2:
+                vy = JUMP_V
+                grounded = False
+                in_gap_jump = False
                 y += vy * DT
                 last_jump_z = z
                 jump_count += 1
@@ -294,10 +292,12 @@ for attempt in range(TARGET_GATES * 10):
                 y = goldTop + 0.3 + random.random() * 0.08
                 vy = 0
             else:
+                # Fell off edge - give upward velocity for coyote jump
                 grounded = False
-                vy = 0
-                # Started falling off edge — this is an implicit gap jump
+                vy = JUMP_V * 0.8
                 in_gap_jump = True
+                y += vy * DT
+                jump_count += 1
         else:
             vy += gravity * DT
             y += vy * DT
