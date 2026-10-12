@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KenzoCoin v17 - checkpoint safe, reconnect fix, jumps+zigzag."""
+"""KenzoCoin v18 - fix jump physics (jumps were instantly cancelled)."""
 import json, struct, time, sys, ssl, os, random, subprocess
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -13,7 +13,7 @@ tok = sys.argv[1]
 handle = sys.argv[2] if len(sys.argv) > 2 else "unknown"
 start_gate = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 TARGET_GATES = 20
-print(f"[G] v17 @{handle} start_gate={start_gate}")
+print(f"[G] v18 @{handle} start_gate={start_gate}")
 
 def get_level(gate, seed):
     try:
@@ -104,7 +104,6 @@ def handle_msg(m):
     return t
 
 def drain_check(t=1.0):
-    """Drain messages, return 'gate' or 'nope' if found."""
     end = time.time() + t
     while time.time() < end:
         r = handle_msg(rx(max(0.05, end - time.time())))
@@ -143,12 +142,6 @@ def build_nav(plats):
         nav.append(e)
     return nav
 
-def near_checkpoint(z_pos, cps, margin=3.0):
-    for cp in cps:
-        if abs(z_pos - cp["z"]) < margin:
-            return True
-    return False
-
 def reconnect():
     global ws, seed
     try: ws.close()
@@ -181,8 +174,7 @@ for attempt in range(TARGET_GATES * 10):
     nav = build_nav(plats)
     gold_z_end = goldZ + gold_d/2
 
-    cp_zs = [cp["z"] for cp in cps]
-    print(f"[G] g{gates+1} a{attempt+1}: gate={gates} fZ={finishZ} gZ={goldZ} p={len(nav)} cp={len(cps)} cpz={cp_zs}")
+    print(f"[G] g{gates+1} a{attempt+1}: gate={gates} fZ={finishZ} gZ={goldZ} p={len(nav)}")
 
     gate_got = False
     noped = False
@@ -244,43 +236,52 @@ for attempt in range(TARGET_GATES * 10):
         x += (tx - x) * 0.15 + (random.random() - 0.5) * 0.2
         x = max(-5, min(5, x))
 
-        # Jump: every 5-7 z, but NOT near checkpoints (±3 z)
-        if grounded and z - last_jump_z > 5 + random.random() * 2:
-            if not near_checkpoint(z, cps, 3.0):
-                vy = JUMP_V
-                grounded = False
-                last_jump_z = z
-                jump_count += 1
-
-        # Gap jumps (always jump)
-        if grounded and should_jump():
-            vy = JUMP_V; grounded = False
+        # Periodic jumps every 5-7 z units
+        if grounded and z - last_jump_z > 5 + random.random() * 2 and z < goldZ - 2:
+            vy = JUMP_V
+            grounded = False
+            y += vy * DT  # CRITICAL: apply initial velocity immediately
             last_jump_z = z
             jump_count += 1
 
-        # Physics
-        on = cur_nav()
-        if on and grounded:
-            y = on["top"] + 0.3 + random.random() * 0.08
-            vy = 0
-        elif on and not grounded and y <= on["top"] + 0.5:
-            y = on["top"] + 0.3
-            vy = 0; grounded = True
-        elif not on and grounded:
-            if on_gold_plat():
+        # Gap jumps
+        elif grounded and should_jump():
+            vy = JUMP_V
+            grounded = False
+            y += vy * DT  # apply initial velocity immediately
+            last_jump_z = z
+            jump_count += 1
+
+        # Physics - only land when falling DOWN (vy <= 0)
+        if grounded:
+            on = cur_nav()
+            if on:
+                y = on["top"] + 0.3 + random.random() * 0.08
+                vy = 0
+            elif on_gold_plat():
                 y = goldTop + 0.3 + random.random() * 0.08
                 vy = 0
             else:
-                grounded = False; vy = 0
-
-        if not grounded:
+                grounded = False
+                vy = 0
+        else:
+            # In air
             vy += GRAVITY * DT
             y += vy * DT
-            on2 = cur_nav()
-            if on2 and y <= on2["top"] + 0.5:
-                y = on2["top"] + 0.3; vy = 0; grounded = True
-            elif on_gold_plat() and y <= goldTop + 0.5:
-                y = goldTop + 0.3; vy = 0; grounded = True
+
+            # Only land when falling (vy <= 0)
+            if vy <= 0:
+                on = cur_nav()
+                if on and y <= on["top"] + 0.5:
+                    y = on["top"] + 0.3
+                    vy = 0
+                    grounded = True
+                elif on_gold_plat() and y <= goldTop + 0.5:
+                    y = goldTop + 0.3
+                    vy = 0
+                    grounded = True
+
+            # Fell off
             if y < -10:
                 pos(x, -300, z, 1)
                 time.sleep(0.2)
@@ -310,7 +311,7 @@ for attempt in range(TARGET_GATES * 10):
         r = handle_msg(rx(0.005))
         if r == "gate": gate_got = True; break
         if r == "nope": noped = True; break
-        if r in ("room",): break  # don't break on epoch
+        if r == "room": break
 
         # Fin after ~1.0s of finished flag
         if finished_flag_t > 0 and grounded and time.time() - finished_flag_t >= 1.0:
@@ -326,7 +327,7 @@ for attempt in range(TARGET_GATES * 10):
                 print(f"[G] late fin z={z:.1f}")
                 fin_sent = True; break
 
-    # Wait for response (gate or nope)
+    # Wait for response
     if fin_sent and not gate_got and not noped:
         for _ in range(40):
             r = handle_msg(rx(0.4))
