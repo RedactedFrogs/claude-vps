@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""KenzoCoin v14 - jumps, fin after goldZ center, zigzag."""
+"""KenzoCoin v15 - use gates for level gen, more jumps, zigzag, gold slowdown."""
 import json, struct, time, sys, ssl, os, random, subprocess, math
 sys.stdout.reconfigure(line_buffering=True)
 
@@ -13,7 +13,7 @@ tok = sys.argv[1]
 handle = sys.argv[2] if len(sys.argv) > 2 else "unknown"
 start_gate = int(sys.argv[3]) if len(sys.argv) > 3 else 0
 TARGET_GATES = 20
-print(f"[G] v14 @{handle} start_gate={start_gate}")
+print(f"[G] v15 @{handle} start_gate={start_gate}")
 
 def get_level(gate, seed):
     try:
@@ -39,7 +39,6 @@ gates = start_gate
 seed = 0
 pts = 0
 last_ping = 0
-current_lvl = start_gate
 
 def ping():
     global last_ping
@@ -64,7 +63,7 @@ def rx(timeout=3):
     except: return None
 
 def handle_msg(m):
-    global gates, pts, seed, current_lvl
+    global gates, pts, seed
     if not m: return None
     t = m.get("t")
     if t == "gate":
@@ -74,8 +73,7 @@ def handle_msg(m):
         print(f"[G] GATE! +{m.get('gain',0)} pts={pts} g={gates}")
         return "gate"
     elif t == "room":
-        current_lvl = m.get("lvl", current_lvl)
-        print(f"[G] room lvl={current_lvl}")
+        print(f"[G] room lvl={m.get('lvl')}")
         return "room"
     elif t == "pts":
         pts = m.get("pts", pts)
@@ -120,7 +118,7 @@ for _ in range(25):
 if not seed:
     print("[G] no seed"); ws.close(); sys.exit(1)
 
-print(f"[G] playing gates {gates}->{TARGET_GATES}, lvl={current_lvl}")
+print(f"[G] playing from gate={gates}")
 
 def build_nav(plats):
     safe = [p for p in plats if not p.get("fake")]
@@ -142,10 +140,10 @@ for attempt in range(TARGET_GATES * 8):
     if gates >= TARGET_GATES:
         break
 
-    lvl_for_gen = current_lvl
-    level = get_level(lvl_for_gen, seed)
+    # ALWAYS use gates for level generation (not room lvl)
+    level = get_level(gates, seed)
     if not level:
-        print(f"[G] skip lvl={lvl_for_gen}"); time.sleep(3); drain(1); continue
+        print(f"[G] skip gate={gates}"); time.sleep(3); drain(1); continue
 
     finishZ = level["finishZ"]
     gold = level.get("gold", [{}])[0]
@@ -159,7 +157,7 @@ for attempt in range(TARGET_GATES * 8):
     gold_z_start = goldZ - gold_d/2
     gold_z_end = goldZ + gold_d/2
 
-    print(f"[G] g{gates+1} a{attempt+1}: lvl={lvl_for_gen} fZ={finishZ} gZ={goldZ} ge={gold_z_end:.1f} p={len(nav)}")
+    print(f"[G] g{gates+1} a{attempt+1}: gate={gates} fZ={finishZ} gZ={goldZ} ge={gold_z_end:.1f} p={len(nav)}")
 
     gate_got = False
     DT = 0.08
@@ -175,6 +173,7 @@ for attempt in range(TARGET_GATES * 8):
     zigzag_timer = 0
     last_jump_z = -999
     jump_count = 0
+    start_time = time.time()
 
     def cur_nav():
         for n in nav:
@@ -208,7 +207,7 @@ for attempt in range(TARGET_GATES * 8):
 
         # Zigzag
         zigzag_timer += DT
-        if zigzag_timer > 0.7 + random.random() * 0.5:
+        if zigzag_timer > 0.6 + random.random() * 0.5:
             zigzag_dir *= -1
             zigzag_timer = 0
 
@@ -225,9 +224,9 @@ for attempt in range(TARGET_GATES * 8):
         x += (tx - x) * 0.15 + (random.random() - 0.5) * 0.25
         x = max(-5, min(5, x))
 
-        # Periodic random jumps (avoid "never-jumps")
-        if grounded and z - last_jump_z > 12 + random.random() * 8 and z < goldZ - 3:
-            vy = JUMP_V * (0.6 + random.random() * 0.4)
+        # Periodic random jumps every ~8-12 z units (avoid "never-jumps")
+        if grounded and z - last_jump_z > 8 + random.random() * 4 and z < gold_z_start - 2:
+            vy = JUMP_V
             grounded = False
             last_jump_z = z
             jump_count += 1
@@ -284,7 +283,7 @@ for attempt in range(TARGET_GATES * 8):
         if z >= goldZ and grounded and on_gold_plat() and not reached_gold_center:
             reached_gold_center = True
             gold_center_t = time.time()
-            print(f"[G] gold center z={z:.1f} jumps={jump_count}")
+            print(f"[G] gold z={z:.1f} j={jump_count} t={time.time()-start_time:.1f}s")
 
         pos(x, y, z, flags)
         ping()
@@ -294,17 +293,17 @@ for attempt in range(TARGET_GATES * 8):
         if r == "gate": gate_got = True; break
         if r in ("room", "epoch", "nope"): break
 
-        # Send fin after 1s on gold center
+        # Send fin after 1s on gold center, still on gold
         if reached_gold_center and grounded and on_gold_plat() and time.time() - gold_center_t >= 1.0:
             for _ in range(5):
-                pos(x + (random.random()-0.5)*0.2, y, z + (random.random()-0.5)*0.15, 4|2)
+                pos(x + (random.random()-0.5)*0.2, y, z + (random.random()-0.5)*0.1, 4|2)
                 time.sleep(DT)
                 ping()
             ws.send(json.dumps({"t": "fin"}))
-            print(f"[G] fin z={z:.1f} y={y:.1f} x={x:.1f}")
+            print(f"[G] fin z={z:.1f} y={y:.1f}")
             fin_sent = True
 
-        # Safety: if past gold end
+        # Safety: past gold end
         if z > gold_z_end + 2 and not fin_sent:
             ws.send(json.dumps({"t": "fin"}))
             print(f"[G] late fin z={z:.1f}")
