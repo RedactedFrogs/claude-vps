@@ -75,7 +75,7 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 
 ## SERVICES PENTING DI VPS2
 - **Jarvis / OpenClaw**: `openclaw-gateway.service` (systemd --user, user boss). Cek: `runuser -u boss -- env XDG_RUNTIME_DIR=/run/user/1001 systemctl --user status openclaw-gateway`. Bot Telegram Jarvis = notifikasi ke owner.
-- **AWP validator** (wallet `0x9C98…`): di-spawn otomatis oleh gateway OpenClaw. **JANGAN restart gateway sembarangan** (validator ikut putus). Penjaga: `awp-validator-watcher.timer`, `awp-api-monitor.timer`.
+- **AWP & Ardi WorkNet: SEMUA bot DIHAPUS 14 Okt 2026** atas permintaan owner (validator, watcher, api-monitor, skill Jarvis `awp`/`mine`, ardi-mine). File `/usr/local/bin/awp_api_monitor.sh` SENGAJA DISISAKAN: itu sumber token Telegram untuk ±14 bot lain — JANGAN dihapus. Key 250 wallet AWP: `/home/boss/wallet_keys.json`.
 - **Fomoater auto-seller**: `fomo-seller.service` + `fomo-seller-watchdog.timer` — cek tiap 1 detik apakah Fomoater Pass (6 buah, soulbound) sudah bisa diperdagangkan; begitu bisa langsung terima offer OpenSea tertinggi **≥ $50**. **JANGAN dimatikan.** Log `/home/boss/fomo-bot/seller.log`, status `/home/boss/fomo-bot/seller_status.json`.
 - **Monitor pass**: `fomopass-monitor.timer` (notif Telegram).
 - **Bridge (akses HP)**: `vps-bridge.service` (Python :18790) + `vps-tunnel.service` (cloudflared quick tunnel) + `bridge-url-watchdog.timer` (tiap 1 menit: auto-restart bridge/tunnel yang mati + publish URL ke repo ini).
@@ -100,7 +100,6 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 - Bridge watchdog: `/var/log/bridge-watchdog.log`
 - Fomo seller: `/home/boss/fomo-bot/seller.log`, watchdog `/var/log/fomo_seller_watchdog.log`
 - Pass monitor: `/var/log/fomopass_monitor.log`
-- AWP validator watcher: `/var/log/awp_validator_watcher.log`
 
 ## ATURAN PENTING
 - **Jawaban singkat** — user pemula, hindari paragraf panjang & opsi teknis tanpa terjemahan. Tampilkan waktu dalam **WIB**.
