@@ -87,6 +87,7 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 - 80 wallet bot → `/home/boss/.pixelpals_wallets.json`
 - Seed Phantom → `/home/boss/.phantom_seed`
 - Seed UniSat (BTC) → `/home/boss/.unisat_seed`
+- Seed NEAR & Quantus (seed SAMA, 12 kata) → `/home/boss/.near_seed` dan `/home/boss/.quantus_seed`
 - **Alamat BTC per akun X:**
   - `@boss_venture89` → `bc1p5g8grjjp6g906g8ezq2nar7krw6nffal0y82y8d6p8ryju55fn7qwx0xkh`
   - `@redacted_frogs` → `bc1p8sl6dlkg0r20hksa5pzpv870haamvzswz3zy2jzh4xg02ldcashq7c84rv`
