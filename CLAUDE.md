@@ -107,6 +107,7 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 - Solusi harus **gratis** (no extra cost untuk runtime/AI lain).
 - **Jangan sebut jumlah wallet ke Discord/external** (Sybil discretion).
 - Disk VPS2 pernah penuh 100% gara-gara log bot yang error-loop — bot baru WAJIB batasi ukuran log-nya.
+- **Timer systemd WAJIB tahan reboot**: selain `OnBootSec`/`OnUnitActiveSec`, tambahkan `OnActiveSec=45s` (drop-in `<timer>.d/rearm.conf`), lalu cek `systemctl list-timers` → NEXT harus terisi. 19 Okt 2026 bridge HP mati ±1,5 hari karena timer watchdog diam setelah VPS2 reboot. VPS2 tidak punya cron.
 - Untuk edit file di VPS: jangan minta user copy-paste; pakai `vps "cat > /path/file <<'EOF' ... EOF"` atau base64 transfer.
 
 ## KALAU BRIDGE 401 (token HP belum terdaftar di VPS2)
