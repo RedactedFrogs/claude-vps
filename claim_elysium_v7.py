@@ -60,24 +60,18 @@ async def main():
     print('Page loaded. Waiting for init...')
     await asyncio.sleep(5)
 
-    # Debug: check fingerprint state
-    debug = await page.evaluate('''() => {
-        return {
-            webdriver: navigator.webdriver,
-            platform: navigator.platform,
-            hardwareConcurrency: navigator.hardwareConcurrency,
-            hasChrome: !!window.chrome,
-        }
-    }''')
-    print(f'Browser state: {json.dumps(debug)}')
+    # Debug: check fingerprint state using nodriver's JS API
+    debug = await page.evaluate('JSON.stringify({webdriver: navigator.webdriver, platform: navigator.platform, hardwareConcurrency: navigator.hardwareConcurrency, hasChrome: !!window.chrome})')
+    print(f'Browser state: {debug}')
 
     results = []
 
     for i, (name, addr) in enumerate(all_wallets):
         print(f'\n--- [{i+1}/{len(all_wallets)}] {name}: {addr[:10]}... ---')
 
-        # Call fetch through the page wrapper
-        resp_raw = await page.evaluate(f'''async () => {{
+        # Use a global variable to store async result, then read it
+        js_code = f"""
+        (async () => {{
             try {{
                 const r = await fetch('/api/faucet/testnet', {{
                     method: 'POST',
@@ -85,14 +79,18 @@ async def main():
                     body: JSON.stringify({{ address: '{addr}', captchaToken: '' }}),
                 }});
                 const body = await r.text();
-                return JSON.stringify({{ status: r.status, body }});
+                window.__faucet_result = JSON.stringify({{ status: r.status, body: body }});
             }} catch (e) {{
-                return JSON.stringify({{ error: e.message }});
+                window.__faucet_result = JSON.stringify({{ error: e.message }});
             }}
-        }}''')
+        }})()
+        """
+        await page.evaluate(js_code)
+        await asyncio.sleep(3)
+        resp_raw = await page.evaluate('window.__faucet_result')
 
         try:
-            resp = json.loads(resp_raw)
+            resp = json.loads(resp_raw) if resp_raw else {'error': 'no result'}
         except:
             resp = {'error': f'parse error: {resp_raw}'}
 
