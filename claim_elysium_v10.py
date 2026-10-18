@@ -85,9 +85,9 @@ async def main():
         page.on('response', on_response)
 
         print('Loading faucet page...')
-        await page.goto(FAUCET_URL, wait_until='networkidle', timeout=60000)
-        print('Page loaded. Waiting 8s...')
-        await asyncio.sleep(8)
+        await page.goto(FAUCET_URL, wait_until='load', timeout=60000)
+        print('Page loaded. Waiting 10s for JS init...')
+        await asyncio.sleep(10)
 
         # Debug browser state
         debug = await page.evaluate('''() => JSON.stringify({
