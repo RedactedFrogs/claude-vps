@@ -78,6 +78,7 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 - **AWP & Ardi WorkNet: SEMUA bot DIHAPUS 14 Okt 2026** atas permintaan owner (validator, watcher, api-monitor, skill Jarvis `awp`/`mine`, ardi-mine). File `/usr/local/bin/awp_api_monitor.sh` SENGAJA DISISAKAN: itu sumber token Telegram untuk ±14 bot lain — JANGAN dihapus. Key 250 wallet AWP: `/home/boss/wallet_keys.json`.
 - **Fomoater auto-seller**: `fomo-seller.service` + `fomo-seller-watchdog.timer` — cek tiap 1 detik apakah Fomoater Pass (soulbound) sudah bisa diperdagangkan; begitu bisa langsung terima offer OpenSea tertinggi **≥ $10** (diturunkan dari $50 pada 14 Okt 2026, `const MIN_USD` di seller.js). Yang DIJUAL cuma **4 pass** (#382, #373 utama; #1523, #1399 validator); **#282 (utama) & #1167 (validator) DISIMPAN** via `KEEP_IDS` di seller.js. **JANGAN dimatikan.** Log `/home/boss/fomo-bot/seller.log`, status `/home/boss/fomo-bot/seller_status.json`.
 - **Monitor pass**: `fomopass-monitor.timer` (notif Telegram).
+- **RESET miner (Trac)**: `reset-miner.service` (+ `reset-dashboard`, `reset-dash-proxy`) — mining koin RESET 24 jam. **JANGAN dimatikan kecuali user minta.** Lihat bagian RESET MINING.
 - **Bridge (akses HP)**: `vps-bridge.service` (Python :18790) + `vps-tunnel.service` (cloudflared quick tunnel) + `bridge-url-watchdog.timer` (tiap 1 menit: auto-restart bridge/tunnel yang mati + publish URL ke repo ini).
 - Lihat semua: `vps "systemctl list-units --type=service --state=running --no-pager"`.
 
@@ -88,6 +89,7 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 - Seed Phantom → `/home/boss/.phantom_seed`
 - Seed UniSat (BTC) → `/home/boss/.unisat_seed`
 - Seed NEAR & Quantus (seed SAMA, 12 kata) → `/home/boss/.near_seed` dan `/home/boss/.quantus_seed`
+- Wallet RESET (Trac) `trac1yx04gpawplc7su2ydka0l3308v4ealll2xa9mstpsqsz5lsvzmhq47qxrm` (di JSON tampil hex `219f5407…16ee` = wallet sama) → seed terenkripsi `/home/boss/.reset-signer/keystore.json` + password `/home/boss/.reset-signer.env`. Tidak ada 12 kata: dua file itu = seed-nya. Backup di laptop `.claude\wallet-backup\reset\` (dites pulih 19 Okt → alamat sama).
 - **Alamat BTC per akun X:**
   - `@boss_venture89` → `bc1p5g8grjjp6g906g8ezq2nar7krw6nffal0y82y8d6p8ryju55fn7qwx0xkh`
   - `@redacted_frogs` → `bc1p8sl6dlkg0r20hksa5pzpv870haamvzswz3zy2jzh4xg02ldcashq7c84rv`
@@ -101,6 +103,19 @@ Setelah bootstrap, **semua command VPS = `vps "<command bash>"`** (jalan sebagai
 - Bridge watchdog: `/var/log/bridge-watchdog.log`
 - Fomo seller: `/home/boss/fomo-bot/seller.log`, watchdog `/var/log/fomo_seller_watchdog.log`
 - Pass monitor: `/var/log/fomopass_monitor.log`
+- RESET miner: `TZ=Asia/Jakarta journalctl -u reset-miner -n 40 --no-pager` (ringkasan: `reset-status`)
+
+## RESET MINING (Trac Network) — sejak 19 Okt 2026
+Game koin AI-agent **RESET** (github.com/Trac-Systems/reset), berjalan mengikuti blok Bitcoin. Bot di VPS2 main otomatis 24 jam. Eksperimen, bukan investasi. Gratis (AI NVIDIA NIM gratis, tanpa gas).
+- **User tanya status / bot jalan? / dapat koin? / penghasilan? → `vps "reset-status"`**, lalu ringkas singkat (output sudah Indonesia + WIB). Ikuti baris **KESIMPULAN**. Kalau timeout: tunggu 1–2 menit lalu ulang.
+- Cara kerja bot: cek tiap ±1 menit; kirim header Bitcoin tiap 10 menit (hadiah 0.003125 koin kalau jadi pengirim pertama); saldo bebas ≥0.1 otomatis DIKUNCI ke Mine; tiap ronde (6 blok ≈ 1 jam, klaim hanya di 3 blok pertama) AI memilih level klaim, dibatasi ≤1000 (= jatah adil). **Overclaim mati** (anti strike/denda). **Transfer koin ke wallet lain DIBLOK.**
+- Cara baca: `saldo bebas` = belum dikunci; `TERKUNCI` = ikut mining (min 0.1). Klaim hanya terjadi kalau jendela TERBUKA **dan** TERKUNCI ≥0.1 — TERKUNCI 0 = belum bisa klaim. `strike` harus 0. Ronde terlewat = tidak dapat apa-apa, tidak didenda.
+- Penghasilan: `total dari Mine` = total hasil klaim; `perubahan total aset` = naik/turun maks 24 jam terakhir (airdrop yang masuk ikut terhitung — jangan disebut penghasilan); hadiah header ≈ `header diterima` × 0.003125.
+- Airdrop: koin awal hanya untuk 263 orang yang lolos; user harus reply tweet x.com/fitzyOG/status/2111536871914271176 dengan alamat trac1 di atas sebelum **21 Okt 02.16 WIB** (per 19 Okt belum dikonfirmasi user sudah reply — tanya user). Lewat tanggal itu & saldo masih 0 = tidak dapat airdrop; bot cuma dapat hadiah header.
+- Pause/berhenti (HANYA kalau user minta): `vps "systemctl disable --now reset-miner"` (tetap mati walau VPS reboot; reset-status menulis "DIMATIKAN SENGAJA" → jangan dinyalakan sendiri). Lanjut: `vps "systemctl enable --now reset-miner"`. Selama mati: koin terkunci tetap aman, tidak dapat hasil, tidak didenda.
+- Tarik koin dari Mine (HANYA atas perintah eksplisit user): pause bot dulu (kalau tidak, dikunci lagi otomatis) → `vps "reset-call unlock <jumlah>"` (min 0.1) → tunggu 144 blok (±1 hari) → `vps "reset-call withdraw"` → koin kembali ke saldo bebas wallet ini. Koin yang antre keluar masih bisa kena denda.
+- Detail JSON: `vps "reset-call status"` (blok `lottery` = lotre awal yang sudah selesai, abaikan). Dashboard `http://100.103.6.98:4748` hanya dari laptop/HP yang Tailscale-nya nyala — sesi Cloud tidak bisa (pakai reset-status).
+- JANGAN: baca/tampilkan isi `.reset-signer.env` / `keystore.json` (cek aman cukup `ls -la`); jangan ubah `/home/boss/reset-bot/miner.env` atau jalankan lock/unlock/withdraw tanpa izin user.
 
 ## ATURAN PENTING
 - **Jawaban singkat** — user pemula, hindari paragraf panjang & opsi teknis tanpa terjemahan. Tampilkan waktu dalam **WIB**.
