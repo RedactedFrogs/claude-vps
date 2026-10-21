@@ -155,7 +155,7 @@ DEX P2P resmi Trac (github.com/Trac-Systems/intercom-dex, v0.1.13): pembeli meng
 - **Antrian jual otomatis $400 (sejak 22 Okt 01.37 WIB)**: HANYA kuota **0,18154069 RESET** (RESET bebas saat itu) — 1 listing jual @ $400 + langsung jual ke pembeli ≥ $400 tertinggi; mati sendiri kalau kuota habis. RESET yang cair setelahnya (0,8 hasil unlock 22 Okt sore) **TIDAK** ikut antri $400 (user: "yang besok jangan antri di 400$") → cuma lewat notif tombol; tanya user harganya. Sisa kuota: `cat /home/boss/dex-data/sellbot/auto_state.json` (`sold` dalam satuan 1e-8) + `dex-call status`.
 - Harga pasar publik (tanpa VPS): `curl -s https://reset.much.fun/v1/market/view`.
 - Dari sesi **laptop** (PowerShell): perintah sama dijalankan di VPS2 lewat SSH Tailscale atau helper bridge, mis. `ssh root@100.103.6.98 "dex-call status"`.
-- Riwayat: 21 Okt beli 5,37 TNK @ $0,185; jual 0,0739 RESET @ $400 (16.08 WIB) + 0,0015 @ $400 (16.41) = 30,16 USDC → sudah ditarik ke Phantom (16.49 WIB); 22 Okt ±01.40 WIB 0,09 @ $400 = 36 USDC dari antrian (masih di wallet DEX).
+- Riwayat: 21 Okt beli 5,37 TNK @ $0,185; jual 0,0739 RESET @ $400 (16.08 WIB) + 0,0015 @ $400 (16.41) = 30,16 USDC → sudah ditarik ke Phantom (16.49 WIB); 22 Okt ±01.40 WIB 0,09 @ $400 = 36 USDC dari antrian → ditarik ke Phantom 01.50 WIB.
 - JANGAN: stop dex-peer/dex-trader saat ada transaksi berjalan; baca/tampilkan `/home/boss/dex-data/trader.pw`, `control.token`, `trader-main/keyring.json`, `trac-wallet.json`; panggil getUpdates/webhook di bot Telegram Jarvis (dipakai Jarvis — makanya tombol jual berupa link).
 
 ## ATURAN PENTING
