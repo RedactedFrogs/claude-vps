@@ -1,77 +1,66 @@
 #!/usr/bin/env bash
-# Tambah 1 worker BNT (Seine) di mesin Bohrium Claw baru.
-# Semua worker konek ke WALLET yang SAMA; yang beda cuma nama (--pool-worker).
-# Pakai: sudo bash add-bnt-worker.sh <nama-worker>
-#   contoh: sudo bash add-bnt-worker.sh bohr6
-set -euo pipefail
+# Jalankan 1 worker BNT (Seine) di mesin Bohrium Claw.
+# TIDAK butuh root / systemd. Semua worker -> WALLET yang SAMA; beda cuma nama (--pool-worker).
+# Pakai:  bash add-bnt-worker.sh <nama-worker>
+#   contoh: bash add-bnt-worker.sh bohr6
+set -u
 
-# ===== KONFIG (biasanya tidak perlu diubah) =====
-WORKER="${1:-bohr6}"   # nama worker UNIK per Claw: bohr6, bohr7, bohr8, ...
+# ===== KONFIG =====
+WORKER="${1:-bohr6}"          # nama worker UNIK per Claw: bohr6, bohr7, bohr8, ...
 ADDR="ZKE7kxdDJdEzLLfcx1GWaWZCR6aUobXsi8eDiksm3N21cSEagMt2FKbVYcQkXha6tari1CgQoUnxU8jGxg5d3LotAt9g4"
 POOL="stratum+tcp://bntpool.com:3333"
-THREADS="${THREADS:-1}"  # 1 thread ~1.5 H/s, butuh ~2GB RAM. Naikkan hanya kalau RAM Claw >= 4GB.
-DIR=/opt/bnt
-# ================================================
+THREADS="${THREADS:-1}"        # 1 thread ~1.5 H/s, butuh ~2GB RAM. Naikkan hanya kalau RAM banyak.
+VER="v0.2.24"                  # versi yang terbukti jalan di bohr1-4
+# ==================
 
-echo "== Setup worker BNT: $WORKER (threads=$THREADS) =="
-mkdir -p "$DIR" "$DIR/data"; cd "$DIR"
+DIR="$HOME/bnt"; mkdir -p "$DIR/data"; cd "$DIR" || exit 1
+echo "== Worker $WORKER | threads $THREADS | arch $(uname -m) =="
+awk '/MemTotal/{t=$2}/MemAvailable/{a=$2}END{printf "RAM total %d MB, tersedia %d MB (1 thread butuh ~2048 MB)\n",t/1024,a/1024}' /proc/meminfo
 
-# --- Unduh Seine linux x86_64 terbaru dari GitHub (kalau belum ada) ---
+# --- pilih aset sesuai arsitektur ---
+case "$(uname -m)" in
+  x86_64|amd64)  ASSET=seine-linux-x86_64.tar.gz ;;
+  aarch64|arm64) ASSET=seine-linux-aarch64.tar.gz ;;
+  *) echo "GAGAL: arsitektur $(uname -m) tidak didukung Seine (butuh x86_64/aarch64)"; exit 1 ;;
+esac
+
+# --- unduh Seine kalau belum ada ---
 if [ ! -x "$DIR/seine" ]; then
-  echo "Mengambil rilis Seine terbaru dari GitHub..."
-  JSON=$(curl -fsSL https://api.github.com/repos/zpalmtree/seine/releases/latest)
-  URLS=$(printf '%s' "$JSON" | grep -oE '"browser_download_url"[^,]*' | cut -d'"' -f4)
-  URL=$(printf '%s\n' "$URLS" | grep -iE 'linux' | grep -iE 'x86_64|amd64|x64' | grep -iE '\.tar\.gz$|\.tgz$|\.zip$' | grep -iv musl | head -1)
-  [ -n "$URL" ] || URL=$(printf '%s\n' "$URLS" | grep -iE 'linux' | grep -iE 'x86_64|amd64|x64' | head -1)
-  if [ -z "$URL" ]; then echo "GAGAL cari aset linux x86_64. Aset tersedia:"; printf '%s\n' "$URLS"; exit 1; fi
-  echo "Download: $URL"
-  curl -fsSL "$URL" -o seine-pkg
-  case "$URL" in
-    *.zip) command -v unzip >/dev/null || { apt-get update -y && apt-get install -y unzip; }; unzip -o seine-pkg ;;
-    *)     tar -xzf seine-pkg ;;
-  esac
-  BIN=$(find . -maxdepth 3 -type f -name 'seine*' ! -name '*.tar*' ! -name '*.tgz' ! -name '*.zip' ! -name 'seine-pkg' | head -1)
-  [ -n "$BIN" ] || { echo "Binary seine tidak ketemu setelah ekstrak."; exit 1; }
-  [ "$BIN" = "./seine" ] || cp "$BIN" "$DIR/seine"
-  chmod +x "$DIR/seine"; rm -f seine-pkg
+  URL="https://github.com/zpalmtree/seine/releases/download/$VER/$ASSET"
+  echo "Unduh: $URL"
+  curl -fL --retry 3 -o s.tgz "$URL" || { echo "GAGAL download Seine (cek internet Claw)"; exit 1; }
+  tar -xzf s.tgz || { echo "GAGAL ekstrak arsip"; exit 1; }
+  rm -f s.tgz
+  BIN=$(find . -maxdepth 2 -type f -name 'seine*' ! -name '*.tar*' ! -name '*.tgz' ! -name '*.sh' | head -1)
+  [ -n "$BIN" ] || { echo "GAGAL: binary seine tak ketemu di arsip"; ls -la; exit 1; }
+  [ "$BIN" = "./seine" ] || mv "$BIN" "$DIR/seine"
+  chmod +x "$DIR/seine"
 fi
-"$DIR/seine" --version || true
+"$DIR/seine" --version || { echo "GAGAL: Seine tak bisa jalan (arch/lib salah?)"; exit 1; }
 
-CMD="$DIR/seine --backend cpu --threads $THREADS --ui plain --data-dir $DIR/data --pool-url $POOL --pool-worker $WORKER --address $ADDR"
+# --- matikan worker nama sama kalau sudah ada, lalu start baru ---
+pkill -f "seine .*--pool-worker $WORKER" 2>/dev/null; sleep 1
 
-# --- Jalankan sebagai service systemd kalau tersedia, kalau tidak loop background ---
-if command -v systemctl >/dev/null 2>&1 && [ -d /run/systemd/system ]; then
-  cat > /etc/systemd/system/bnt-miner.service <<EOF
-[Unit]
-Description=BNT miner (Seine) worker $WORKER -> bntpool.com
-After=network-online.target
-Wants=network-online.target
-[Service]
-ExecStart=$CMD
-Restart=on-failure
-RestartSec=30
-Nice=19
-MemoryMax=2700M
-[Install]
-WantedBy=multi-user.target
-EOF
-  systemctl daemon-reload
-  systemctl enable --now bnt-miner
-  echo "OK: service bnt-miner aktif (worker=$WORKER)."
-  sleep 4; systemctl --no-pager -l status bnt-miner | head -15
-else
-  cat > "$DIR/run-$WORKER.sh" <<EOF
+cat > "$DIR/run-$WORKER.sh" <<EOF
 #!/usr/bin/env bash
+cd "$DIR"
 while true; do
-  $CMD >> "$DIR/$WORKER.log" 2>&1
-  echo "[\$(date)] seine stop, restart 30s..." >> "$DIR/$WORKER.log"
+  "$DIR/seine" --mode pool --backend cpu --threads $THREADS --allow-oversubscribe \\
+    --data-dir "$DIR/data" --pool-url "$POOL" --pool-worker "$WORKER" --address "$ADDR" \\
+    >> "$DIR/$WORKER.log" 2>&1
+  echo "[\$(date '+%F %T')] seine berhenti, restart 30 dtk..." >> "$DIR/$WORKER.log"
   sleep 30
 done
 EOF
-  chmod +x "$DIR/run-$WORKER.sh"
-  setsid "$DIR/run-$WORKER.sh" >/dev/null 2>&1 &
-  echo "OK: worker $WORKER jalan di background (log: $DIR/$WORKER.log)."
-fi
+chmod +x "$DIR/run-$WORKER.sh"
+: > "$DIR/$WORKER.log"
+setsid "$DIR/run-$WORKER.sh" >/dev/null 2>&1 &
+echo "Worker '$WORKER' start. Log: $DIR/$WORKER.log"
 
-echo
-echo "Cek dari HP/VPS: jalankan  vps \"bnt-status\"  -> worker '$WORKER' muncul ~1-2 menit lagi."
+sleep 12
+echo "================= 30 baris pertama log ================="
+head -30 "$DIR/$WORKER.log"
+echo "========================================================"
+echo "- Kalau ada tulisan 'accepted' / 'share' / hashrate -> BERHASIL."
+echo "- Kalau ada ERROR/panic -> COPY semua teks di atas, kirim ke Claude HP."
+echo "- Cek dari HP:  vps \"bnt-status\"  -> worker '$WORKER' muncul ~1-2 menit lagi."
